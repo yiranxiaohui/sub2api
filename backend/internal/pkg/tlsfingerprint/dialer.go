@@ -275,7 +275,7 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		host = addr
 	}
 
-	spec := buildClientHelloSpecFromProfile(profile)
+	spec := BuildClientHelloSpec(profile)
 	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloCustom)
 
 	if err := tlsConn.ApplyPreset(spec); err != nil {
@@ -331,9 +331,16 @@ func isGREASEValue(v uint16) bool {
 	return v&0x0f0f == 0x0a0a && v>>8 == v&0xff
 }
 
-// buildClientHelloSpecFromProfile constructs ClientHelloSpec from a Profile.
-// This is a standalone function that can be used by both Dialer and HTTPProxyDialer.
-func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
+// BuildClientHelloSpec constructs a utls.ClientHelloSpec from a Profile.
+//
+// A nil profile resolves to the built-in Node.js 24.x defaults (JA3 44f88fca027f27bab4bb08d4af15f23e,
+// JA4 t13d1714h1_5b57614c22b0_7baf387fc6ff). Empty slice fields on a non-nil profile fall back
+// to the same defaults, so callers only need to populate fields they intend to override.
+//
+// This is exported so downstream packages (e.g. HTTP/2 fingerprint clients that need to perform
+// the utls handshake themselves before driving the h2 framer) can reuse the exact ClientHello
+// that the standard Dialer / HTTPProxyDialer / SOCKS5ProxyDialer produce.
+func BuildClientHelloSpec(profile *Profile) *utls.ClientHelloSpec {
 	// Resolve effective values (profile overrides or built-in defaults)
 	cipherSuites := defaultCipherSuites
 	if profile != nil && len(profile.CipherSuites) > 0 {

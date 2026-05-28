@@ -179,8 +179,8 @@ func TestDialerWithProfile(t *testing.T) {
 	// Build specs and compare
 	// Note: We can't directly compare JA3 without making network requests
 	// but we can verify the specs are different
-	spec1 := buildClientHelloSpecFromProfile(dialer1.profile)
-	spec2 := buildClientHelloSpecFromProfile(dialer2.profile)
+	spec1 := BuildClientHelloSpec(dialer1.profile)
+	spec2 := BuildClientHelloSpec(dialer2.profile)
 
 	// Profile with GREASE should have more extensions
 	if len(spec2.Extensions) <= len(spec1.Extensions) {
@@ -237,7 +237,7 @@ func TestSOCKS5ProxyDialerBasic(t *testing.T) {
 // TestBuildClientHelloSpec tests ClientHello spec construction.
 func TestBuildClientHelloSpec(t *testing.T) {
 	// Test with nil profile (should use defaults)
-	spec := buildClientHelloSpecFromProfile(nil)
+	spec := BuildClientHelloSpec(nil)
 
 	if len(spec.CipherSuites) == 0 {
 		t.Error("expected cipher suites to be set")
@@ -257,7 +257,7 @@ func TestBuildClientHelloSpec(t *testing.T) {
 		EnableGREASE: false,
 		CipherSuites: []uint16{0x1301, 0x1302},
 	}
-	spec = buildClientHelloSpecFromProfile(customProfile)
+	spec = BuildClientHelloSpec(customProfile)
 
 	if len(spec.CipherSuites) != 2 {
 		t.Errorf("expected 2 cipher suites, got %d", len(spec.CipherSuites))

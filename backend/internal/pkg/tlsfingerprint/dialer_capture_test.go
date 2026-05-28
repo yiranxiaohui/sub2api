@@ -297,7 +297,7 @@ func TestBuildClientHelloSpecNewFields(t *testing.T) {
 		PSKModes:            []uint16{1},
 	}
 
-	spec := buildClientHelloSpecFromProfile(profile)
+	spec := BuildClientHelloSpec(profile)
 
 	// Verify cipher suites
 	if len(spec.CipherSuites) != 2 || spec.CipherSuites[0] != 0x1301 {
@@ -346,7 +346,7 @@ func TestBuildClientHelloSpecNewFields(t *testing.T) {
 	}
 
 	// Test nil profile uses all defaults
-	specDefault := buildClientHelloSpecFromProfile(nil)
+	specDefault := BuildClientHelloSpec(nil)
 	for _, ext := range specDefault.Extensions {
 		switch e := ext.(type) {
 		case *utls.ALPNExtension:
