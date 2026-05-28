@@ -138,7 +138,10 @@ var ProviderSet = wire.NewSet(
 	NewProxyExitInfoProber,
 	NewClaudeUsageFetcher,
 	NewClaudeOAuthClient,
-	NewHTTPUpstream,
+	// HTTP upstream: wraps the stdlib transport with an opt-in h2 fingerprint
+	// path. With gateway.h2_fingerprint.enabled=false (the default) the
+	// behavior is identical to NewHTTPUpstream.
+	NewHTTPUpstreamWithH2Fingerprint,
 	NewOpenAIOAuthClient,
 	NewGeminiOAuthClient,
 	NewGeminiCliCodeAssistClient,

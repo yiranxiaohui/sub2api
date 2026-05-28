@@ -718,6 +718,9 @@ type GatewayConfig struct {
 	OpenAIWS GatewayOpenAIWSConfig `mapstructure:"openai_ws"`
 	// OpenAIHTTP2: OpenAI HTTP 上游协议策略（默认启用 HTTP/2，可按代理能力回退 HTTP/1.1）
 	OpenAIHTTP2 GatewayOpenAIHTTP2Config `mapstructure:"openai_http2"`
+	// H2Fingerprint: Anthropic / Claude Code 出站请求的 HTTP/2 指纹伪装策略
+	// 默认关闭，开启后会用 imroc/req + 自定义 utls + h2 SETTINGS 替代 stdlib 出站
+	H2Fingerprint GatewayH2FingerprintConfig `mapstructure:"h2_fingerprint"`
 	// ImageConcurrency: 图片生成独立并发限制配置（默认关闭）
 	ImageConcurrency ImageConcurrencyConfig `mapstructure:"image_concurrency"`
 
@@ -794,6 +797,30 @@ type GatewayConfig struct {
 	// UserMessageQueue: 用户消息串行队列配置
 	// 对 role:"user" 的真实用户消息实施账号级串行化 + RPM 自适应延迟
 	UserMessageQueue UserMessageQueueConfig `mapstructure:"user_message_queue"`
+}
+
+// GatewayH2FingerprintConfig Anthropic 出站 HTTP/2 指纹伪装配置。
+//
+// 默认关闭，与现有 stdlib 出站行为完全等价。开启后，对带 TLS profile 的请求
+// （DoWithTLS 路径）使用 imroc/req + 自定义 utls + h2 SETTINGS 链路，从而对齐
+// Node.js 24.x / claude-cli 的真实 wire fingerprint。
+//
+// 任何路径异常都会回落到 stdlib 路径，配合短期熔断避免反复失败。
+type GatewayH2FingerprintConfig struct {
+	// Enabled: 总开关，关闭时所有请求走 stdlib 路径
+	Enabled bool `mapstructure:"enabled"`
+	// EnableForOAuthOnly: 仅对 OAuth 账号启用（API-key 账号继续走 stdlib）
+	// OAuth 账号被 Anthropic 风控的概率更高，是主要受益者；API-key 路径稳定，不必动
+	EnableForOAuthOnly bool `mapstructure:"enable_for_oauth_only"`
+	// FallbackOnError: 单次请求失败时是否立即回落 stdlib 重试
+	// 关闭时 h2fp 失败直接返回错误，让上游 retry 逻辑处理
+	FallbackOnError bool `mapstructure:"fallback_on_error"`
+	// FallbackErrorThreshold: 熔断窗口内允许的错误次数，超过后临时禁用 h2fp
+	FallbackErrorThreshold int `mapstructure:"fallback_error_threshold"`
+	// FallbackWindowSeconds: 错误计数的统计窗口（秒）
+	FallbackWindowSeconds int `mapstructure:"fallback_window_seconds"`
+	// FallbackTTLSeconds: 熔断触发后强制使用 stdlib 的持续时间（秒）
+	FallbackTTLSeconds int `mapstructure:"fallback_ttl_seconds"`
 }
 
 // GatewayOpenAIHTTP2Config OpenAI HTTP 上游协议配置。
@@ -1832,6 +1859,14 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_http2.fallback_error_threshold", 2)
 	viper.SetDefault("gateway.openai_http2.fallback_window_seconds", 60)
 	viper.SetDefault("gateway.openai_http2.fallback_ttl_seconds", 600)
+
+	// h2 指纹伪装：默认关闭，开启时仅 OAuth 走 h2fp 路径，失败自动回落 stdlib
+	viper.SetDefault("gateway.h2_fingerprint.enabled", false)
+	viper.SetDefault("gateway.h2_fingerprint.enable_for_oauth_only", true)
+	viper.SetDefault("gateway.h2_fingerprint.fallback_on_error", true)
+	viper.SetDefault("gateway.h2_fingerprint.fallback_error_threshold", 3)
+	viper.SetDefault("gateway.h2_fingerprint.fallback_window_seconds", 60)
+	viper.SetDefault("gateway.h2_fingerprint.fallback_ttl_seconds", 600)
 	viper.SetDefault("gateway.image_concurrency.enabled", false)
 	viper.SetDefault("gateway.image_concurrency.max_concurrent_requests", 0)
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
@@ -2584,6 +2619,15 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIHTTP2.FallbackWindowSeconds < 0 {
 		return fmt.Errorf("gateway.openai_http2.fallback_window_seconds must be non-negative")
+	}
+	if c.Gateway.H2Fingerprint.FallbackErrorThreshold < 0 {
+		return fmt.Errorf("gateway.h2_fingerprint.fallback_error_threshold must be non-negative")
+	}
+	if c.Gateway.H2Fingerprint.FallbackWindowSeconds < 0 {
+		return fmt.Errorf("gateway.h2_fingerprint.fallback_window_seconds must be non-negative")
+	}
+	if c.Gateway.H2Fingerprint.FallbackTTLSeconds < 0 {
+		return fmt.Errorf("gateway.h2_fingerprint.fallback_ttl_seconds must be non-negative")
 	}
 	if c.Gateway.OpenAIHTTP2.FallbackTTLSeconds < 0 {
 		return fmt.Errorf("gateway.openai_http2.fallback_ttl_seconds must be non-negative")
