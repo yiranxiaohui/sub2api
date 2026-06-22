@@ -284,7 +284,7 @@ func TestH2FP_BaseErrorWithFallbackDisabled_Propagates(t *testing.T) {
 // TestH2FP_InterfaceSatisfied confirms the compile-time assertion holds at runtime.
 func TestH2FP_InterfaceSatisfied(t *testing.T) {
 	cfg := &config.Config{}
-	var up service.HTTPUpstream = NewHTTPUpstreamWithH2Fingerprint(cfg)
+	up := NewHTTPUpstreamWithH2Fingerprint(cfg)
 	if up == nil {
 		t.Fatal("constructor returned nil")
 	}
