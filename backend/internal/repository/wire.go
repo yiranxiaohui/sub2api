@@ -144,6 +144,7 @@ var ProviderSet = wire.NewSet(
 	// behavior is identical to NewHTTPUpstream.
 	NewHTTPUpstreamWithH2Fingerprint,
 	NewOpenAIOAuthClient,
+	NewGrokOAuthClient,
 	NewGeminiOAuthClient,
 	NewGeminiCliCodeAssistClient,
 	NewGeminiDriveClient,
