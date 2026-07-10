@@ -32,6 +32,11 @@
 <table>
 
 <tr>
+<td width="180"><a href="https://cctk.ai/register?aff=SUB2API"><img src="assets/partners/logos/cctk.jpg" alt="CCTK.AI" width="150"></a></td>
+<td>CCTK.AI のご支援に感謝します！<a href="https://cctk.ai/register?aff=SUB2API">CCTK.AI</a> は安定性とコストパフォーマンスにこだわった AI API ゲートウェイで、Claude、OpenAI、Gemini など主要モデルの高速中継サービスを提供しています。Claude Code や Codex などの主要なコーディングツールにシームレスに対応し、公式価格を大きく下回るコストで同等のモデル能力を利用できます。<a href="https://cctk.ai/register?aff=SUB2API">こちらのリンク</a>から登録して、より速く、より安定した、よりお得な AI API 接続をお試しください。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.openmodel.ai?ref=sub2api"><img src="assets/partners/logos/openmodel.jpg" alt="openmodel" width="150"></a></td>
 <td>1つの API で、トップモデルを使い放題！<a href="https://www.openmodel.ai?ref=sub2api">OpenModel</a> は本番環境グレードで高可用性の AI API ゲートウェイに特化し、アプリを真に高速・安定させます：自動フェイルオーバー、最適なチャネルへのスマートルーティング、本番グレードの SLA 保証。単一プロバイダーをはるかに上回る SLA で、安定性をあなたの核心的な競争力にします。</td>
 </tr>
@@ -39,6 +44,11 @@
 <tr>
 <td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
 <td>ETok.ai のご支援に感謝します！ETok.ai はワンストップ AI プログラミングツールサービスプラットフォームの構築に取り組んでいます。Claude Code の専用プランと技術コミュニティサービスを提供し、Google Gemini や OpenAI Codex もサポートしています。丁寧に設計されたプランと専門的な技術コミュニティを通じて、開発者に安定したサービス保証と継続的な技術サポートを提供し、AI アシスト プログラミングを真の生産性向上ツールにします。<a href="https://etok.ai">こちら</a>から登録！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://apikey.fun/register?aff=SUB2API"><img src="assets/partners/logos/apikey-fun.png" alt="APIKEY.FUN" width="150"></a></td>
+<td>APIKEY.FUN のご支援に感謝します！<a href="https://apikey.fun/register?aff=SUB2API">APIKEY.FUN</a> は sub2api オープンソースプロジェクトのコアコントリビューターの一つであり、オープンで安定した、コストパフォーマンスに優れた AI API アクセスサービスの提供に取り組んでいます。プラットフォームは Claude、OpenAI、Gemini など人気モデルの API 中継サービスをサポートし、価格は公式料金のわずか 7% から。専用リンク <a href="https://apikey.fun/register?aff=SUB2API">APIKEY</a> から登録すると、すべてのチャージで永久 5% 割引をご利用いただけます。</td>
 </tr>
 
 <tr>
