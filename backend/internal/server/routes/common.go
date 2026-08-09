@@ -14,9 +14,14 @@ func RegisterCommonRoutes(r *gin.Engine) {
 	})
 
 	// Claude Code 遥测日志（忽略，直接返回200）
-	r.POST("/api/event_logging/batch", func(c *gin.Context) {
+	// 覆盖历史 v1 路径（/api/event_logging/batch）与当前 CLI（2.1.226+）使用的
+	// v2 路径（/api/event_logging/v2/batch）。两条均为独立静态路由，段数不同不冲突；
+	// 若上游后续再出 v3，按此追加一行即可。
+	swallowTelemetry := func(c *gin.Context) {
 		c.Status(http.StatusOK)
-	})
+	}
+	r.POST("/api/event_logging/batch", swallowTelemetry)
+	r.POST("/api/event_logging/v2/batch", swallowTelemetry)
 
 	// Setup status endpoint (always returns needs_setup: false in normal mode)
 	// This is used by the frontend to detect when the service has restarted after setup
