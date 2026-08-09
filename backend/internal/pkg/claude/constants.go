@@ -5,7 +5,7 @@ package claude
 
 // Beta header 常量
 //
-// 这里的常量对齐真实 Claude Code CLI 的最新流量（截至 2026-04）。
+// 这里的常量对齐真实 Claude Code CLI 的最新流量（截至 CLI 2.1.226 / 2026-08）。
 // 选型参考：与 Parrot (src/transform/cc_mimicry.py) 的 BETAS 保持一致，
 // 原因：Anthropic 上游会基于 anthropic-beta 的完整集合判定请求来源；
 // 缺少任何"官方 Claude Code 请求才会带"的 beta，都会被降级到第三方额度，
@@ -25,6 +25,16 @@ const (
 	BetaRedactThinking     = "redact-thinking-2026-02-12"
 	BetaContextManagement  = "context-management-2025-06-27"
 	BetaExtendedCacheTTL   = "extended-cache-ttl-2025-04-11"
+
+	// 新增（对齐官方 CLI 2.1.226 抓包流量）
+	BetaThinkingTokenCount    = "thinking-token-count-2026-05-13"
+	BetaMidConversationSystem = "mid-conversation-system-2026-04-07"
+	BetaAdvisorTool           = "advisor-tool-2026-03-01"
+	BetaAdvancedToolUse       = "advanced-tool-use-2025-11-20"
+	BetaServerSideFallback    = "server-side-fallback-2026-07-01"
+	BetaFallbackCredit        = "fallback-credit-2026-06-01"
+	BetaAFKMode               = "afk-mode-2026-01-31"
+	BetaCacheDiagnosis        = "cache-diagnosis-2026-04-07"
 )
 
 // DroppedBetas 是转发时需要从 anthropic-beta header 中移除的 beta token 列表。
@@ -66,7 +76,7 @@ const DefaultCacheControlTTL = "5m"
 // CLICurrentVersion 是 sub2api 当前对外伪装的 Claude Code CLI 版本号（三段 semver）。
 // 用于 billing attribution block 中的 cc_version=X.Y.Z.{fp} 前缀以及 fingerprint 计算。
 // 必须与 DefaultHeaders["User-Agent"] 中的版本号严格一致；不一致会被 Anthropic 判第三方。
-const CLICurrentVersion = "2.1.161"
+const CLICurrentVersion = "2.1.226"
 
 // FullClaudeCodeMimicryBetas 返回最"像"真实 Claude Code CLI 的完整 beta 列表，
 // 用于 OAuth 账号伪装成 Claude Code 时使用。
@@ -82,10 +92,20 @@ func FullClaudeCodeMimicryBetas() []string {
 		BetaClaudeCode,
 		BetaOAuth,
 		BetaInterleavedThinking,
-		BetaPromptCachingScope,
-		BetaEffort,
+		// 刻意跳过 BetaRedactThinking（真实 CLI 会在此处携带）：它会让上游抹除
+		// thinking 内容，破坏本网关的 thinking 透传；客户端显式传入时由合并逻辑保留。
+		BetaThinkingTokenCount,
 		BetaContextManagement,
+		BetaPromptCachingScope,
+		BetaMidConversationSystem,
+		BetaAdvisorTool,
+		BetaAdvancedToolUse,
+		BetaEffort,
+		BetaServerSideFallback,
+		BetaFallbackCredit,
+		BetaAFKMode,
 		BetaExtendedCacheTTL,
+		BetaCacheDiagnosis,
 	}
 }
 
