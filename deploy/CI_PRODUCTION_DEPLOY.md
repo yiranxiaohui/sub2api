@@ -8,17 +8,15 @@ the application container back to its previous image.
 ## Production host preparation
 
 The production host must have Docker with the Compose plugin installed. The
-deployment directory must already contain `.env` and one of the repository's
-Compose files. Its Compose file must use the `SUB2API_IMAGE` variable included
-in the current repository version.
+deployment directory must already contain the Compose file used by the running
+`sub2api` container.
 
 The SSH user must be able to run Docker without an interactive password prompt.
-For the first deployment after enabling this workflow, update the production
-Compose file to the current repository version so its application image is:
-
-```yaml
-image: ${SUB2API_IMAGE:-ghcr.io/yiranxiaohui/sub2api:latest}
-```
+The workflow reads the image name from the existing `sub2api` container, pulls
+the exact new GHCR release, retags it to that existing image name, and recreates
+only the application service through the existing Compose project. The server's
+Compose file does not need to be modified. Digest-pinned images are rejected
+because they cannot be safely retagged.
 
 ## GitHub production environment
 

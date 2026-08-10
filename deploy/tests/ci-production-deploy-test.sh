@@ -13,10 +13,18 @@ cat > "$TEMP_DIR/bin/docker" <<'FAKE_DOCKER'
 set -euo pipefail
 printf '%s|%s\n' "${SUB2API_IMAGE:-}" "$*" >> "$FAKE_DOCKER_LOG"
 
-if [ "$1" = "inspect" ] && [ "$3" = "{{.Image}}" ]; then
-  echo "sha256:previous"
-elif [ "$1" = "inspect" ]; then
-  echo "${FAKE_HEALTH_STATUS:-healthy}"
+if [ "$1" = "inspect" ]; then
+  case "$3" in
+    '{{.Image}}')
+      echo "sha256:previous"
+      ;;
+    '{{.Config.Image}}')
+      echo "weishaw/sub2api:latest"
+      ;;
+    *)
+      echo "${FAKE_HEALTH_STATUS:-healthy}"
+      ;;
+  esac
 fi
 FAKE_DOCKER
 chmod +x "$TEMP_DIR/bin/docker"
@@ -28,8 +36,9 @@ FAKE_HEALTH_STATUS=healthy \
   bash "$ROOT_DIR/deploy/ci-production-deploy.sh" \
   "$TEMP_DIR/deployment" docker-compose.yml ghcr.io/example/sub2api:1.2.3
 
-grep -Fq 'ghcr.io/example/sub2api:1.2.3|compose -f docker-compose.yml pull sub2api' "$FAKE_DOCKER_LOG"
-grep -Fq 'ghcr.io/example/sub2api:1.2.3|compose -f docker-compose.yml up -d --no-deps --force-recreate sub2api' "$FAKE_DOCKER_LOG"
+grep -Fq '|pull ghcr.io/example/sub2api:1.2.3' "$FAKE_DOCKER_LOG"
+grep -Fq '|image tag ghcr.io/example/sub2api:1.2.3 weishaw/sub2api:latest' "$FAKE_DOCKER_LOG"
+grep -Fq '|compose -f docker-compose.yml up -d --no-deps --force-recreate sub2api' "$FAKE_DOCKER_LOG"
 
 : > "$FAKE_DOCKER_LOG"
 if FAKE_HEALTH_STATUS=unhealthy \
@@ -39,7 +48,7 @@ if FAKE_HEALTH_STATUS=unhealthy \
   exit 1
 fi
 
-grep -Fq 'image tag sha256:previous sub2api-ci-rollback:previous' "$FAKE_DOCKER_LOG"
-grep -Fq 'sub2api-ci-rollback:previous|compose -f docker-compose.yml up -d --no-deps --force-recreate sub2api' "$FAKE_DOCKER_LOG"
+grep -Fq '|image tag sha256:previous weishaw/sub2api:latest' "$FAKE_DOCKER_LOG"
+grep -Fq '|compose -f docker-compose.yml up -d --no-deps --force-recreate sub2api' "$FAKE_DOCKER_LOG"
 
 printf 'CI production deploy test passed\n'

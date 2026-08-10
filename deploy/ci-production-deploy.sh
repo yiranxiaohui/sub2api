@@ -4,32 +4,35 @@ set -Eeuo pipefail
 deploy_path="${1:?deployment path is required}"
 compose_file="${2:?Compose file is required}"
 release_image="${3:?release image is required}"
-rollback_image="sub2api-ci-rollback:previous"
 
 cd "$deploy_path"
 test -f "$compose_file"
-test -f .env
 docker compose version
 
 old_image_id="$(docker inspect --format '{{.Image}}' sub2api 2>/dev/null || true)"
-if [ -n "$old_image_id" ]; then
-  docker image tag "$old_image_id" "$rollback_image"
+configured_image="$(docker inspect --format '{{.Config.Image}}' sub2api 2>/dev/null || true)"
+
+if [ -z "$old_image_id" ] || [ -z "$configured_image" ]; then
+  echo "Existing sub2api container was not found" >&2
+  exit 1
+fi
+if [[ "$configured_image" == *@* ]]; then
+  echo "Existing Compose image is pinned by digest and cannot be retagged: $configured_image" >&2
+  exit 1
 fi
 
 rollback_deployment() {
   echo "Production deployment failed; showing application logs" >&2
   docker compose -f "$compose_file" logs --tail=200 sub2api >&2 || true
 
-  if [ -n "$old_image_id" ]; then
-    echo "Rolling back to the previous application image" >&2
-    export SUB2API_IMAGE="$rollback_image"
-    docker compose -f "$compose_file" up -d --no-deps --force-recreate sub2api || true
-  fi
+  echo "Rolling back to the previous application image" >&2
+  docker image tag "$old_image_id" "$configured_image" || true
+  docker compose -f "$compose_file" up -d --no-deps --force-recreate sub2api || true
   exit 1
 }
 
-export SUB2API_IMAGE="$release_image"
-docker compose -f "$compose_file" pull sub2api
+docker pull "$release_image"
+docker image tag "$release_image" "$configured_image"
 if ! docker compose -f "$compose_file" up -d --no-deps --force-recreate sub2api; then
   rollback_deployment
 fi
