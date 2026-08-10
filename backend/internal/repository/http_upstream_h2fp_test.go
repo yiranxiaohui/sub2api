@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	reqv3 "github.com/imroc/req/v3"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -24,6 +27,7 @@ type stubUpstream struct {
 	doWithTLSCalls int
 	lastProfile    *tlsfingerprint.Profile
 	returnErr      error
+	lastBody       string
 }
 
 func (s *stubUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -37,14 +41,25 @@ func (s *stubUpstream) Do(req *http.Request, proxyURL string, accountID int64, a
 }
 
 func (s *stubUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	var body []byte
+	if req != nil && req.Body != nil {
+		body, _ = io.ReadAll(req.Body)
+	}
 	s.mu.Lock()
 	s.doWithTLSCalls++
 	s.lastProfile = profile
+	s.lastBody = string(body)
 	s.mu.Unlock()
 	if s.returnErr != nil {
 		return nil, s.returnErr
 	}
 	return cannedResponse("base.DoWithTLS"), nil
+}
+
+func (s *stubUpstream) body() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastBody
 }
 
 func (s *stubUpstream) counts() (do, doTLS int) {
@@ -148,6 +163,64 @@ func TestH2FP_FlagOn_FailureWithFallback_RetriesBase(t *testing.T) {
 	}
 }
 
+func TestH2FP_FallbackReplaysConsumedRequestBody(t *testing.T) {
+	stub := &stubUpstream{}
+	svc := newServiceForTest(stub, true, true)
+	profile := &tlsfingerprint.Profile{Name: "Node.js", ALPNProtocols: []string{"h2", "http/1.1"}}
+
+	client := reqv3.C()
+	client.GetTransport().WrapRoundTripFunc(func(http.RoundTripper) reqv3.HttpRoundTripFunc {
+		return func(req *http.Request) (*http.Response, error) {
+			_, _ = io.ReadAll(req.Body)
+			_ = req.Body.Close()
+			return nil, errors.New("injected h2 failure after body consumption")
+		}
+	})
+	svc.clients.Store(h2fpClientKey{accountID: 1, proxyKey: directProxyKey, profileID: profileCacheKey(profile)}, client)
+
+	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(`{"message":"keep me"}`))
+	if _, err := svc.DoWithTLS(req, "", 1, 1, profile); err != nil {
+		t.Fatalf("fallback should succeed: %v", err)
+	}
+	if got, want := stub.body(), `{"message":"keep me"}`; got != want {
+		t.Fatalf("fallback body = %q, want %q", got, want)
+	}
+}
+
+func TestH2FP_RedirectPolicyHonorsPerRequestDisable(t *testing.T) {
+	stub := &stubUpstream{}
+	svc := newServiceForTest(stub, true, true)
+	profile := &tlsfingerprint.Profile{Name: "Node.js", ALPNProtocols: []string{"h2", "http/1.1"}}
+	client, err := svc.acquireClient(1, "", profile, 1)
+	if err != nil {
+		t.Fatalf("acquire client: %v", err)
+	}
+
+	ctx := service.WithHTTPUpstreamRedirectsDisabled(context.Background())
+	redirectReq, _ := http.NewRequestWithContext(ctx, "GET", "https://example.com/redirected", nil)
+	err = client.GetClient().CheckRedirect(redirectReq, []*http.Request{newTestRequest()})
+	if !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("redirect policy error = %v, want http.ErrUseLastResponse", err)
+	}
+}
+
+func TestH2FP_RedirectPolicyRevalidatesPrivateHost(t *testing.T) {
+	stub := &stubUpstream{}
+	svc := newServiceForTest(stub, true, true)
+	svc.cfg.Security.URLAllowlist.Enabled = true
+	svc.cfg.Security.URLAllowlist.AllowPrivateHosts = false
+	profile := &tlsfingerprint.Profile{Name: "Node.js", ALPNProtocols: []string{"h2", "http/1.1"}}
+	client, err := svc.acquireClient(1, "", profile, 1)
+	if err != nil {
+		t.Fatalf("acquire client: %v", err)
+	}
+
+	redirectReq, _ := http.NewRequest("GET", "https://10.0.0.1/internal", nil)
+	if err := client.GetClient().CheckRedirect(redirectReq, []*http.Request{newTestRequest()}); err == nil {
+		t.Fatal("private redirect target should be rejected")
+	}
+}
+
 func TestH2FP_FlagOn_FailureWithoutFallback_ReturnsError(t *testing.T) {
 	stub := &stubUpstream{}
 	svc := newServiceForTest(stub, true, false /* fallback off */)
@@ -245,11 +318,11 @@ func TestH2FP_AcquireClient_CachesByKey(t *testing.T) {
 
 	profile := &tlsfingerprint.Profile{Name: "Node.js"}
 
-	c1, err := svc.acquireClient(1, "http://proxy/", profile)
+	c1, err := svc.acquireClient(1, "http://proxy/", profile, 1)
 	if err != nil {
 		t.Fatalf("acquire 1: %v", err)
 	}
-	c2, err := svc.acquireClient(1, "http://proxy/", profile)
+	c2, err := svc.acquireClient(1, "http://proxy/", profile, 1)
 	if err != nil {
 		t.Fatalf("acquire 2: %v", err)
 	}
@@ -258,7 +331,7 @@ func TestH2FP_AcquireClient_CachesByKey(t *testing.T) {
 	}
 
 	// Different account → different client.
-	c3, err := svc.acquireClient(2, "http://proxy/", profile)
+	c3, err := svc.acquireClient(2, "http://proxy/", profile, 1)
 	if err != nil {
 		t.Fatalf("acquire 3: %v", err)
 	}
@@ -278,6 +351,29 @@ func TestH2FP_BaseErrorWithFallbackDisabled_Propagates(t *testing.T) {
 	_, err := svc.DoWithTLS(newTestRequest(), "", 1, 1, profile)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("error should propagate from base: got %v", err)
+	}
+}
+
+// TestH2FP_AllowlistBlocksPrivateHostBeforeH2FP verifies the SSRF guard that
+// the stdlib path applies (validateRequestHost) is also enforced on the h2fp
+// path — enabling h2fp must not silently bypass the URLAllowlist.
+func TestH2FP_AllowlistBlocksPrivateHost(t *testing.T) {
+	stub := &stubUpstream{}
+	svc := newServiceForTest(stub, true, true)
+	svc.cfg.Security.URLAllowlist.Enabled = true
+	svc.cfg.Security.URLAllowlist.AllowPrivateHosts = false
+
+	profile := &tlsfingerprint.Profile{Name: "Node.js", ALPNProtocols: []string{"h2", "http/1.1"}}
+	req, _ := http.NewRequest("POST", "https://10.0.0.1/v1/messages", strings.NewReader(`{}`))
+
+	_, err := svc.DoWithTLS(req, "", 1, 1, profile)
+	if err == nil {
+		t.Fatal("expected private-host request to be rejected by the allowlist")
+	}
+
+	do, doTLS := stub.counts()
+	if doTLS != 0 || do != 0 {
+		t.Errorf("base upstream must not be called when allowlist rejects: do=%d, doTLS=%d", do, doTLS)
 	}
 }
 

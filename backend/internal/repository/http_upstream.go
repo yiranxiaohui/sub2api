@@ -6,7 +6,9 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -476,8 +478,9 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	}
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, upstreamProfile)
-	// TLS 指纹客户端使用独立的缓存键，加 "tls:" 前缀
-	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault)
+	// TLS 指纹客户端使用独立的缓存键，加 "tls:" 前缀。键必须包含 profile 内容摘要，
+	// 否则修改/重绑 profile（或切换随机/内置模式）后旧 transport 仍被复用，指纹不生效。
+	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault) + "|fp:" + profileCacheKey(profile)
 	poolKey := buildPoolKey(settings, upstreamProtocolModeDefault) + ":tls"
 
 	now := time.Now()
@@ -558,17 +561,29 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 }
 
 func (s *httpUpstreamService) shouldValidateResolvedIP() bool {
-	if s.cfg == nil {
-		return false
-	}
-	if !s.cfg.Security.URLAllowlist.Enabled {
-		return false
-	}
-	return !s.cfg.Security.URLAllowlist.AllowPrivateHosts
+	return shouldValidateResolvedIP(s.cfg)
 }
 
 func (s *httpUpstreamService) validateRequestHost(req *http.Request) error {
-	if !s.shouldValidateResolvedIP() {
+	return validateRequestHost(req, s.cfg)
+}
+
+// shouldValidateResolvedIP reports whether the URL allowlist rejects private
+// hosts. Shared by the stdlib and h2fp request paths.
+func shouldValidateResolvedIP(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	if !cfg.Security.URLAllowlist.Enabled {
+		return false
+	}
+	return !cfg.Security.URLAllowlist.AllowPrivateHosts
+}
+
+// validateRequestHost rejects requests whose resolved IP is outside the URL
+// allowlist (SSRF guard). Shared by the stdlib and h2fp request paths.
+func validateRequestHost(req *http.Request, cfg *config.Config) error {
+	if !shouldValidateResolvedIP(cfg) {
 		return nil
 	}
 	if req == nil || req.URL == nil {
@@ -1335,6 +1350,17 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 		ForceAttemptHTTP2: false,
 	}
 
+	// 此 transport 走 HTTP/1.1（net/http 只能在 *tls.Conn 上运行 HTTP/2，
+	// 而 utls dialer 返回的不是 *tls.Conn），因此绝不能向对端宣告 h2：
+	// 一旦服务端按 ALPN 协商为 h2，而本地仍按 HTTP/1.1 组帧，流就会错乱。
+	// 需要 h2 的 profile 必须走 h2fingerprint 客户端（gateway.h2_fingerprint）。
+	if stripped, hadH2 := stripH2ALPN(profile); hadH2 {
+		slog.Warn("tls_fingerprint_transport_h2_alpn_stripped",
+			"profile", profile.Name,
+			"reason", "stdlib fingerprint transport speaks HTTP/1.1; enable gateway.h2_fingerprint for h2")
+		profile = stripped
+	}
+
 	// 根据代理类型选择合适的 TLS 指纹 Dialer
 	if proxyURL == nil {
 		// 直连：使用 TLSFingerprintDialer
@@ -1350,17 +1376,19 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 			socks5Dialer := tlsfingerprint.NewSOCKS5ProxyDialer(profile, proxyURL)
 			transport.DialTLSContext = socks5Dialer.DialTLSContext
 		case "https":
-			// The fingerprint dialer emits a plaintext CONNECT preface and cannot
-			// establish TLS to an HTTPS proxy. Keep proxy routing via net/http.
-			return buildUpstreamTransport(settings, proxyURL, upstreamProtocolModeDefault)
+			// HTTPS 代理：先与代理建立 TLS，再发 CONNECT 建立隧道，最后对目标做 utls 握手。
+			slog.Debug("tls_fingerprint_transport_https_connect", "proxy", proxyURL.Host)
+			httpsDialer := tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL)
+			transport.DialTLSContext = httpsDialer.DialTLSContext
 		case "http":
-			// HTTP/HTTPS 代理：使用 HTTPProxyDialer（CONNECT 隧道）
+			// HTTP 代理：使用 HTTPProxyDialer（CONNECT 隧道）
 			slog.Debug("tls_fingerprint_transport_http_connect", "proxy", proxyURL.Host)
 			httpDialer := tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL)
 			transport.DialTLSContext = httpDialer.DialTLSContext
 		default:
 			// 未知代理类型，回退到普通代理配置（无 TLS 指纹）
-			slog.Debug("tls_fingerprint_transport_unknown_scheme_fallback", "scheme", scheme)
+			slog.Warn("tls_fingerprint_transport_unknown_scheme_fallback",
+				"scheme", scheme, "reason", "unknown proxy scheme drops the TLS fingerprint")
 			if err := proxyutil.ConfigureTransportProxy(transport, proxyURL); err != nil {
 				return nil, err
 			}
@@ -1368,6 +1396,50 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 	}
 
 	return transport, nil
+}
+
+// profileCacheKey returns a stable content hash of a TLS profile's
+// ClientHello-relevant fields. Used in client cache keys so that editing or
+// rebinding a profile actually takes effect instead of silently reusing a
+// stale transport (which was previously possible: the old key held only
+// account/proxy/pool dimensions). nil maps to a fixed "builtin" bucket.
+func profileCacheKey(profile *tlsfingerprint.Profile) string {
+	if profile == nil {
+		return "builtin"
+	}
+	data, err := json.Marshal(profile)
+	if err != nil {
+		// Unmarshalable profiles are virtually impossible here (all fields are
+		// primitive slices / strings), but fall back to a name-based key rather
+		// than silently colliding every profile.
+		return "name:" + profile.Name
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
+}
+
+// stripH2ALPN returns a copy of profile with "h2" removed from ALPNProtocols
+// when present, along with whether anything was removed. The stdlib net/http
+// fingerprint transport speaks HTTP/1.1 (HTTP/2 requires a *tls.Conn, which
+// the utls dialer does not return), so a profile offering h2 would negotiate a
+// protocol the framer cannot honor. The caller's profile is never mutated.
+func stripH2ALPN(profile *tlsfingerprint.Profile) (*tlsfingerprint.Profile, bool) {
+	if profile == nil || len(profile.ALPNProtocols) == 0 {
+		return profile, false
+	}
+	kept := profile.ALPNProtocols[:0:0]
+	for _, proto := range profile.ALPNProtocols {
+		if strings.EqualFold(proto, "h2") {
+			continue
+		}
+		kept = append(kept, proto)
+	}
+	if len(kept) == len(profile.ALPNProtocols) {
+		return profile, false
+	}
+	cp := *profile
+	cp.ALPNProtocols = kept
+	return &cp, true
 }
 
 // trackedBody 带跟踪功能的响应体包装器

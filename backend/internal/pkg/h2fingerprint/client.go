@@ -3,6 +3,7 @@ package h2fingerprint
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"time"
@@ -42,6 +43,12 @@ type Options struct {
 	// TLSHandshakeTimeout caps the utls handshake. Zero defaults to req's
 	// default (10s).
 	TLSHandshakeTimeout time.Duration
+
+	// RootCAs optionally overrides the CA pool used to verify the upstream
+	// certificate during the utls handshake. nil uses the system roots. This
+	// matters for self-hosted / MITM-terminated upstream endpoints that
+	// present custom certificates.
+	RootCAs *x509.CertPool
 }
 
 // NewClient builds a *req.Client that emits the Node.js 24.x / claude-cli wire
@@ -56,6 +63,17 @@ type Options struct {
 // responsibility to cache and reuse it — building a fresh client on every
 // request defeats connection pooling and the TLS session ticket reuse that
 // makes the fingerprint cheap.
+//
+// Note on HTTP/2: we deliberately do NOT call req's EnableForceHTTP2. That
+// routes every request through req's bundled http2 transport, which (a) dials
+// by itself and therefore ignores the configured proxy, and (b) requires the
+// post-handshake connection to satisfy an internal *tls.Conn-style interface
+// that a utls.UConn does not implement — the request would panic. Instead we
+// let req's standard connect logic run: it dials (directly or through the
+// proxy's CONNECT tunnel), invokes our utls handshake via TLSHandshakeContext,
+// and then promotes to h2 automatically when ALPN negotiates it (see
+// convertConnectionState for the NegotiatedProtocolIsMutual detail). This
+// keeps proxies working and degrades to HTTP/1.1 rather than panicking.
 func NewClient(opts Options) (*req.Client, error) {
 	h2 := opts.H2Profile.Resolved()
 
@@ -72,7 +90,6 @@ func NewClient(opts Options) (*req.Client, error) {
 	}
 
 	c := req.C().
-		EnableForceHTTP2().
 		SetHTTP2SettingsFrame(settings...).
 		SetHTTP2ConnectionFlow(h2.ConnectionFlow).
 		// NB: upstream method name is "Oder" — typo in github.com/imroc/req/v3
@@ -80,11 +97,15 @@ func NewClient(opts Options) (*req.Client, error) {
 		// without also bumping the dependency.
 		SetCommonPseudoHeaderOder(h2.PseudoHeaderOrder...).
 		SetCommonHeaderOrder(h2.HeaderOrder...).
-		SetTLSHandshake(buildTLSHandshakeFunc(tlsProfile))
+		SetTLSHandshake(buildTLSHandshakeFunc(tlsProfile, opts.RootCAs))
 
 	if opts.Timeout > 0 {
 		c.SetTimeout(opts.Timeout)
 	}
+	// req.C() installs a 2-minute client timeout by default. Our contract is
+	// that Timeout zero means "no client-level timeout; the per-request
+	// context governs" (matching the stdlib upstream path). Clear it.
+	c.GetClient().Timeout = opts.Timeout
 	if opts.TLSHandshakeTimeout > 0 {
 		c.SetTLSHandshakeTimeout(opts.TLSHandshakeTimeout)
 	}
@@ -123,8 +144,8 @@ func resolveALPN(profile *tlsfingerprint.Profile) (*tlsfingerprint.Profile, erro
 
 // buildTLSHandshakeFunc returns a req.SetTLSHandshake-compatible callback that
 // performs the utls handshake against an already-connected TCP (or tunneled)
-// conn.
-func buildTLSHandshakeFunc(profile *tlsfingerprint.Profile) func(ctx context.Context, addr string, plainConn net.Conn) (net.Conn, *tls.ConnectionState, error) {
+// conn. rootCAs, when non-nil, is used to verify the upstream certificate.
+func buildTLSHandshakeFunc(profile *tlsfingerprint.Profile, rootCAs *x509.CertPool) func(ctx context.Context, addr string, plainConn net.Conn) (net.Conn, *tls.ConnectionState, error) {
 	return func(ctx context.Context, addr string, plainConn net.Conn) (net.Conn, *tls.ConnectionState, error) {
 		host, _, err := net.SplitHostPort(addr)
 		if err != nil {
@@ -133,7 +154,7 @@ func buildTLSHandshakeFunc(profile *tlsfingerprint.Profile) func(ctx context.Con
 
 		spec := tlsfingerprint.BuildClientHelloSpec(profile)
 
-		uconn := utls.UClient(plainConn, &utls.Config{ServerName: host}, utls.HelloCustom)
+		uconn := utls.UClient(plainConn, &utls.Config{ServerName: host, RootCAs: rootCAs}, utls.HelloCustom)
 		if err := uconn.ApplyPreset(spec); err != nil {
 			_ = plainConn.Close()
 			return nil, nil, fmt.Errorf("h2fingerprint: apply utls preset: %w", err)
@@ -153,6 +174,13 @@ func buildTLSHandshakeFunc(profile *tlsfingerprint.Profile) func(ctx context.Con
 // share the same field names for everything req actually inspects
 // (NegotiatedProtocol, Version, CipherSuite, ServerName, certificates).
 // utls-only fields (PeerApplicationSettings, ECHRetryConfigs) are dropped.
+//
+// NegotiatedProtocolIsMutual is forced true: utls sets it on real handshakes
+// (it is deprecated in the stdlib and always true), but the field is dropped
+// during the struct translation, and req's h2 upgrade path
+// (Transport.dialConn) requires it before handing the connection to its http2
+// layer. Without this the client would silently speak HTTP/1.1 even when ALPN
+// negotiated h2.
 func convertConnectionState(s utls.ConnectionState) tls.ConnectionState {
 	return tls.ConnectionState{
 		Version:                     s.Version,
@@ -160,6 +188,7 @@ func convertConnectionState(s utls.ConnectionState) tls.ConnectionState {
 		DidResume:                   s.DidResume,
 		CipherSuite:                 s.CipherSuite,
 		NegotiatedProtocol:          s.NegotiatedProtocol,
+		NegotiatedProtocolIsMutual:  true,
 		ServerName:                  s.ServerName,
 		PeerCertificates:            s.PeerCertificates,
 		VerifiedChains:              s.VerifiedChains,
