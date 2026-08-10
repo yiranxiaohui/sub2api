@@ -8,7 +8,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const updateCacheKey = "update:latest"
+// Namespace the cache by release repository so an existing upstream result
+// cannot be reused after switching this fork to its own release channel.
+const updateCacheKey = "update:latest:yiranxiaohui/sub2api"
 
 type updateCache struct {
 	rdb *redis.Client

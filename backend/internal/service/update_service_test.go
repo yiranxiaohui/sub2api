@@ -31,13 +31,17 @@ type updateServiceGitHubClientStub struct {
 	release        *GitHubRelease
 	recentReleases []*GitHubRelease
 	recentErr      error
+	latestRepo     string
+	recentRepo     string
 }
 
-func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchLatestRelease(_ context.Context, repo string) (*GitHubRelease, error) {
+	s.latestRepo = repo
 	return s.release, nil
 }
 
-func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchRecentReleases(_ context.Context, repo string, _ int) ([]*GitHubRelease, error) {
+	s.recentRepo = repo
 	return s.recentReleases, s.recentErr
 }
 
@@ -69,6 +73,19 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
 }
 
+func TestUpdateServiceUsesForkReleaseRepository(t *testing.T) {
+	client := &updateServiceGitHubClientStub{
+		release: &GitHubRelease{TagName: "v0.1.3", Name: "v0.1.3"},
+	}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.2", "release")
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.Equal(t, "yiranxiaohui/sub2api", client.latestRepo)
+	require.Equal(t, "0.1.3", info.LatestVersion)
+}
+
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
 	return NewUpdateService(
 		&updateServiceCacheStub{},
@@ -95,6 +112,7 @@ func TestUpdateServiceListRollbackVersionsFiltersAndCaps(t *testing.T) {
 	versions, err := svc.ListRollbackVersions(context.Background())
 
 	require.NoError(t, err)
+	require.Equal(t, "yiranxiaohui/sub2api", svc.githubClient.(*updateServiceGitHubClientStub).recentRepo)
 	require.Len(t, versions, 3)
 	require.Equal(t, "0.1.146", versions[0].Version)
 	require.Equal(t, "0.1.144", versions[1].Version)
