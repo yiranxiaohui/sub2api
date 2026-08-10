@@ -304,3 +304,85 @@ jobs:
           git add backend/cmd/server/VERSION
           git commit -m "chore: sync VERSION to ${VERSION} [skip ci]"
           git push origin HEAD:${{ github.event.repository.default_branch }}
+
+  deploy-production:
+    name: Deploy production
+    needs: [release]
+    if: ${{ needs.release.result == 'success' && vars.PRODUCTION_AUTO_DEPLOY != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: sub2api-production
+      cancel-in-progress: false
+    env:
+      SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+      SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT || '22' }}
+      SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+      DEPLOY_PATH: ${{ secrets.PRODUCTION_DEPLOY_PATH }}
+      COMPOSE_FILE: ${{ vars.PRODUCTION_COMPOSE_FILE || 'docker-compose.yml' }}
+      GHCR_TOKEN: ${{ secrets.PRODUCTION_GHCR_TOKEN }}
+      GHCR_USERNAME: ${{ github.repository_owner }}
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release image
+        id: release_image
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_NAME="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${OWNER}/sub2api:${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS DEPLOY_PATH; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing production configuration: ${name}" >&2
+              exit 1
+            fi
+          done
+
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/sub2api-production"
+          chmod 600 "$HOME/.ssh/sub2api-production"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Authenticate production host to GHCR
+        if: ${{ env.GHCR_TOKEN != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | ssh \
+            -i "$HOME/.ssh/sub2api-production" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            "docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin"
+
+      - name: Deploy release and verify health
+        shell: bash
+        env:
+          RELEASE_IMAGE: ${{ steps.release_image.outputs.image }}
+        run: |
+          set -euo pipefail
+          ssh \
+            -i "$HOME/.ssh/sub2api-production" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            bash -s -- "$DEPLOY_PATH" "$COMPOSE_FILE" "$RELEASE_IMAGE" \
+            < deploy/ci-production-deploy.sh
