@@ -1006,16 +1006,18 @@ type GatewayConfig struct {
 
 // GatewayH2FingerprintConfig Anthropic 出站 HTTP/2 指纹伪装配置。
 //
-// 默认关闭，与现有 stdlib 出站行为完全等价。开启后，对带 TLS profile 的请求
-// （DoWithTLS 路径）使用 imroc/req + 自定义 utls + h2 SETTINGS 链路，从而对齐
-// Node.js 24.x / claude-cli 的真实 wire fingerprint。
+// 默认开启。开启后，对带 TLS profile 的请求（DoWithTLS 路径）使用
+// imroc/req + 自定义 utls + h2 SETTINGS 链路，从而对齐 Node.js 24.x /
+// claude-cli 的真实 wire fingerprint（stdlib TLS 指纹路径只能讲 HTTP/1.1，
+// 见 buildUpstreamTransportWithTLSFingerprint 的 h2 ALPN 剥离）。
 //
 // 任何路径异常都会回落到 stdlib 路径，配合短期熔断避免反复失败。
 type GatewayH2FingerprintConfig struct {
 	// Enabled: 总开关，关闭时所有请求走 stdlib 路径
 	Enabled bool `mapstructure:"enabled"`
 	// EnableForOAuthOnly: 仅对 OAuth 账号启用（API-key 账号继续走 stdlib）
-	// OAuth 账号被 Anthropic 风控的概率更高，是主要受益者；API-key 路径稳定，不必动
+	// 注意：该字段当前未生效。指纹路径仅由带 TLS profile 的请求触发（OAuth
+	// 账号默认即是主要场景），API-key 路径不受影响。保留字段以免配置文件报错。
 	EnableForOAuthOnly bool `mapstructure:"enable_for_oauth_only"`
 	// FallbackOnError: 单次请求失败时是否立即回落 stdlib 重试
 	// 关闭时 h2fp 失败直接返回错误，让上游 retry 逻辑处理
@@ -2287,8 +2289,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_http2.fallback_window_seconds", 60)
 	viper.SetDefault("gateway.openai_http2.fallback_ttl_seconds", 600)
 
-	// h2 指纹伪装：默认关闭，开启时仅 OAuth 走 h2fp 路径，失败自动回落 stdlib
-	viper.SetDefault("gateway.h2_fingerprint.enabled", false)
+	// h2 指纹伪装：默认开启（stdlib 指纹路径只讲 HTTP/1.1，无法承载 h2 ALPN；
+	// 开启后带 TLS profile 的 OAuth 请求走完整 utls+h2 链路），失败自动回落 stdlib
+	viper.SetDefault("gateway.h2_fingerprint.enabled", true)
 	viper.SetDefault("gateway.h2_fingerprint.enable_for_oauth_only", true)
 	viper.SetDefault("gateway.h2_fingerprint.fallback_on_error", true)
 	viper.SetDefault("gateway.h2_fingerprint.fallback_error_threshold", 3)

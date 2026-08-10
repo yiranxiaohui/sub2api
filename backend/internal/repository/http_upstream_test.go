@@ -95,17 +95,76 @@ func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredSOCKSProxy(t *testing.T) {
 	require.Equal(t, int64(1), upstreamCalls.Load())
 }
 
-func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
+func TestTLSFingerprintHTTPSProxyUsesFingerprintDialer(t *testing.T) {
 	proxyURL, err := url.Parse("https://user:pass@proxy.example:8443")
 	require.NoError(t, err)
 	transport, err := buildUpstreamTransportWithTLSFingerprint(poolSettings{}, proxyURL, &tlsfingerprint.Profile{Name: "test"})
 	require.NoError(t, err)
-	require.NotNil(t, transport.Proxy)
-	require.Nil(t, transport.DialTLSContext)
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "upstream.example"}}
-	resolved, err := transport.Proxy(req)
+	require.NotNil(t, transport.DialTLSContext, "https proxy must keep the fingerprint dialer (TLS to proxy + CONNECT + utls to target)")
+	require.Nil(t, transport.Proxy, "proxy routing is handled inside the fingerprint dialer, not via transport.Proxy")
+}
+
+func TestTLSFingerprintCacheKeyIncludesProfile(t *testing.T) {
+	raw := NewHTTPUpstream(nil)
+	svc, ok := raw.(*httpUpstreamService)
+	require.True(t, ok, "NewHTTPUpstream should return the concrete service")
+
+	profileA := &tlsfingerprint.Profile{Name: "A", CipherSuites: []uint16{0x1301}}
+	profileB := &tlsfingerprint.Profile{Name: "B", CipherSuites: []uint16{0x1302}}
+
+	entryA, err := svc.getClientEntryWithTLS("", 1, 1, profileA, service.HTTPUpstreamProfileDefault, true, true)
 	require.NoError(t, err)
-	require.Equal(t, "https://user:pass@proxy.example:8443", resolved.String())
+	entryB, err := svc.getClientEntryWithTLS("", 1, 1, profileB, service.HTTPUpstreamProfileDefault, true, true)
+	require.NoError(t, err)
+	if entryA == entryB {
+		t.Fatal("different profiles must not share a client entry — profile must be part of the TLS cache key")
+	}
+
+	// Same profile again must reuse the cached entry.
+	entryA2, err := svc.getClientEntryWithTLS("", 1, 1, profileA, service.HTTPUpstreamProfileDefault, true, true)
+	require.NoError(t, err)
+	if entryA2 != entryA {
+		t.Error("same profile should reuse the cached client entry")
+	}
+}
+
+func TestStripH2ALPN_RemovesH2WithoutMutatingCaller(t *testing.T) {
+	prof := &tlsfingerprint.Profile{Name: "x", ALPNProtocols: []string{"h2", "http/1.1"}}
+	got, hadH2 := stripH2ALPN(prof)
+	if !hadH2 {
+		t.Error("expected hadH2=true for a profile offering h2")
+	}
+	if got == prof {
+		t.Error("expected a copy back, not the caller's pointer")
+	}
+	if len(got.ALPNProtocols) != 1 || got.ALPNProtocols[0] != "http/1.1" {
+		t.Errorf("ALPN after strip: %v, want [http/1.1]", got.ALPNProtocols)
+	}
+	if len(prof.ALPNProtocols) != 2 {
+		t.Error("caller's profile must not be mutated")
+	}
+}
+
+func TestStripH2ALPN_NoH2ReturnsProfileUnchanged(t *testing.T) {
+	prof := &tlsfingerprint.Profile{Name: "x", ALPNProtocols: []string{"http/1.1"}}
+	got, hadH2 := stripH2ALPN(prof)
+	if hadH2 {
+		t.Error("hadH2 must be false when ALPN has no h2")
+	}
+	if got != prof {
+		t.Error("profile without h2 should be returned as-is (no copy)")
+	}
+}
+
+func TestStripH2ALPN_EmptyALPNLeftToDefaults(t *testing.T) {
+	prof := &tlsfingerprint.Profile{Name: "d"}
+	got, hadH2 := stripH2ALPN(prof)
+	if hadH2 {
+		t.Error("default (empty) ALPN has no h2")
+	}
+	if got != prof || got.ALPNProtocols != nil {
+		t.Error("empty ALPN should be left untouched so the dialer applies its http/1.1 default")
+	}
 }
 
 func startTestSOCKS5Proxy(t *testing.T) (string, *atomic.Int64) {

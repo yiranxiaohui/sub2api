@@ -5,12 +5,14 @@ package tlsfingerprint
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -32,17 +34,22 @@ type Profile struct {
 	Extensions          []uint16 // Extension type IDs in order; empty uses default Node.js 24.x order
 }
 
-// Dialer creates TLS connections with custom fingerprints.
-type Dialer struct {
-	profile    *Profile
-	baseDialer func(ctx context.Context, network, addr string) (net.Conn, error)
-}
-
 // HTTPProxyDialer creates TLS connections through HTTP/HTTPS proxies with custom fingerprints.
 // It handles the CONNECT tunnel establishment before performing TLS handshake.
+// For https-scheme proxies, TLS to the proxy is established first so the
+// CONNECT request travels over an encrypted channel.
 type HTTPProxyDialer struct {
 	profile  *Profile
 	proxyURL *url.URL
+
+	// ProxyTLSConfig optionally customizes the TLS connection to an https
+	// proxy (e.g. RootCAs for a private proxy CA). nil uses system roots.
+	ProxyTLSConfig *tls.Config
+
+	// TLSConfig optionally customizes the utls handshake to the target
+	// (e.g. RootCAs for self-hosted upstreams). nil uses system roots.
+	// ServerName is always derived from the target address.
+	TLSConfig *utls.Config
 }
 
 // SOCKS5ProxyDialer creates TLS connections through SOCKS5 proxies with custom fingerprints.
@@ -50,6 +57,20 @@ type HTTPProxyDialer struct {
 type SOCKS5ProxyDialer struct {
 	profile  *Profile
 	proxyURL *url.URL
+
+	// TLSConfig optionally customizes the utls handshake to the target
+	// (e.g. RootCAs for self-hosted upstreams). nil uses system roots.
+	TLSConfig *utls.Config
+}
+
+// Dialer creates TLS connections with custom fingerprints.
+type Dialer struct {
+	profile    *Profile
+	baseDialer func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// TLSConfig optionally customizes the utls handshake to the target
+	// (e.g. RootCAs for self-hosted upstreams). nil uses system roots.
+	TLSConfig *utls.Config
 }
 
 // Default TLS fingerprint values captured from Claude Code (Node.js 24.x)
@@ -176,11 +197,11 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 	slog.Debug("tls_fingerprint_socks5_tunnel_established")
 
 	// Step 3: Perform TLS handshake on the tunnel with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, d.TLSConfig, addr)
 }
 
 // DialTLSContext establishes a TLS connection through HTTP proxy with the configured fingerprint.
-// Flow: TCP connect to proxy -> CONNECT tunnel -> TLS handshake with utls
+// Flow: TCP connect to proxy -> (TLS to proxy when scheme is https) -> CONNECT tunnel -> TLS handshake with utls
 func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	slog.Debug("tls_fingerprint_http_proxy_connecting", "proxy", d.proxyURL.Host, "target", addr)
 
@@ -204,6 +225,31 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		return nil, fmt.Errorf("connect to proxy: %w", err)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
+
+	// Step 1.5: For https proxies, wrap the connection in TLS first so the
+	// CONNECT request (and the tunneled traffic) is encrypted end-to-end to the
+	// proxy. The utls handshake to the target happens later, inside this tunnel.
+	if strings.EqualFold(d.proxyURL.Scheme, "https") {
+		proxyHost := d.proxyURL.Hostname()
+		cfg := &tls.Config{ServerName: proxyHost, MinVersion: tls.VersionTLS12}
+		if d.ProxyTLSConfig != nil {
+			cfg = d.ProxyTLSConfig.Clone()
+			if cfg.ServerName == "" {
+				cfg.ServerName = proxyHost
+			}
+			if cfg.MinVersion == 0 {
+				cfg.MinVersion = tls.VersionTLS12
+			}
+		}
+		tlsConn := tls.Client(conn, cfg)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			slog.Debug("tls_fingerprint_http_proxy_tls_handshake_failed", "error", err)
+			return nil, fmt.Errorf("TLS to https proxy: %w", err)
+		}
+		conn = tlsConn
+		slog.Debug("tls_fingerprint_http_proxy_tls_established", "proxy", proxyAddr)
+	}
 
 	// Step 2: Send CONNECT request to establish tunnel
 	req := &http.Request{
@@ -247,7 +293,7 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")
 
 	// Step 4: Perform TLS handshake on the tunnel with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, d.TLSConfig, addr)
 }
 
 // DialTLSContext establishes a TLS connection with the configured fingerprint.
@@ -263,20 +309,29 @@ func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.
 	slog.Debug("tls_fingerprint_tcp_connected", "addr", addr)
 
 	// Perform TLS handshake with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, d.TLSConfig, addr)
 }
 
 // performTLSHandshake performs the uTLS handshake on an established connection.
 // It builds a ClientHello spec from the profile, applies it, and completes the handshake.
-// On failure, conn is closed and an error is returned.
-func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string) (net.Conn, error) {
+// tlsOverride, when non-nil, customizes the utls.Config (e.g. RootCAs);
+// ServerName is always derived from addr. On failure, conn is closed and an error is returned.
+func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, tlsOverride *utls.Config, addr string) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
 	}
 
+	cfg := &utls.Config{ServerName: host}
+	if tlsOverride != nil {
+		cfg = tlsOverride.Clone()
+		if cfg.ServerName == "" {
+			cfg.ServerName = host
+		}
+	}
+
 	spec := BuildClientHelloSpec(profile)
-	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloCustom)
+	tlsConn := utls.UClient(conn, cfg, utls.HelloCustom)
 
 	if err := tlsConn.ApplyPreset(spec); err != nil {
 		_ = conn.Close()

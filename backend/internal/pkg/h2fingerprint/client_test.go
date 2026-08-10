@@ -97,7 +97,7 @@ func TestBuildTLSHandshakeFunc_ReturnsCallable(t *testing.T) {
 	// We can't easily drive a full handshake in a unit test (would need a
 	// real TLS server with a matching cert), but we can at least confirm
 	// the constructed function is non-nil and has the right shape.
-	fn := buildTLSHandshakeFunc(nil)
+	fn := buildTLSHandshakeFunc(nil, nil)
 	if fn == nil {
 		t.Fatal("buildTLSHandshakeFunc returned nil")
 	}
@@ -139,6 +139,23 @@ func TestNewClient_WithTimeout(t *testing.T) {
 	}
 	if c.GetClient().Timeout != 5*time.Second {
 		t.Errorf("timeout not propagated: got %v", c.GetClient().Timeout)
+	}
+}
+
+// TestNewClient_ZeroTimeout_MeansNoClientTimeout verifies the documented
+// contract: Timeout zero = no client-level timeout (the per-request context
+// governs). req.C() defaults to a 2-minute client timeout, so we must
+// explicitly clear it.
+func TestNewClient_ZeroTimeout_MeansNoClientTimeout(t *testing.T) {
+	c, err := NewClient(Options{})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if c.GetClient() == nil {
+		t.Fatal("GetClient() returned nil")
+	}
+	if c.GetClient().Timeout != 0 {
+		t.Errorf("zero Timeout should mean no client timeout; got %v", c.GetClient().Timeout)
 	}
 }
 

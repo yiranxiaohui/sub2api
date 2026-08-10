@@ -72,6 +72,23 @@ func (s *h2fpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	if profile == nil || !s.enabled() {
 		return s.base.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
 	}
+	// Plain HTTP has no TLS handshake to fingerprint. Reuse the base path so
+	// behavior matches base.DoWithTLS (which delegates to Do for http URLs).
+	if req != nil && req.URL != nil && strings.EqualFold(req.URL.Scheme, "http") {
+		return s.base.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
+	}
+
+	// The stdlib path guards SSRF / private-IP dialing (validateRequestHost).
+	// The h2fp path dials through req's transport, so it must apply the same
+	// guard itself — otherwise enabling h2fp would silently skip the
+	// URLAllowlist check.
+	if shouldValidateResolvedIP(s.cfg) {
+		if err := validateRequestHost(req, s.cfg); err != nil {
+			return nil, err
+		}
+	}
+	// Keep identity-header injection in sync with the stdlib DoWithTLS path.
+	applyGrokCLIProxyHeaders(req)
 
 	proxyKey := normalizeProxyKey(proxyURL)
 	if s.circuitOpen(proxyKey) {
@@ -79,7 +96,7 @@ func (s *h2fpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return s.base.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
 	}
 
-	client, err := s.acquireClient(accountID, proxyURL, profile)
+	client, err := s.acquireClient(accountID, proxyURL, profile, accountConcurrency)
 	if err != nil {
 		s.recordError(proxyKey)
 		if s.cfg.Gateway.H2Fingerprint.FallbackOnError {
@@ -89,17 +106,25 @@ func (s *h2fpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return nil, fmt.Errorf("h2fp acquire client: %w", err)
 	}
 
+	var fallbackReq *http.Request
+	if s.cfg.Gateway.H2Fingerprint.FallbackOnError {
+		fallbackReq = cloneRequestForReplay(req)
+		if fallbackReq != nil && fallbackReq.Body != nil {
+			defer func() { _ = fallbackReq.Body.Close() }()
+		}
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		s.recordError(proxyKey)
-		if s.cfg.Gateway.H2Fingerprint.FallbackOnError {
+		if s.cfg.Gateway.H2Fingerprint.FallbackOnError && fallbackReq != nil {
 			slog.Debug("h2fp_request_failed_falling_back", "account_id", accountID, "error", err)
 			// Note: req's Do is expected not to write to resp on error, but
 			// guard against a partially-populated body just in case.
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			return s.base.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
+			return s.base.DoWithTLS(fallbackReq, proxyURL, accountID, accountConcurrency, profile)
 		}
 		return nil, err
 	}
@@ -112,6 +137,29 @@ func (s *h2fpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	return resp, nil
 }
 
+// cloneRequestForReplay prepares a second request before the h2fp attempt can
+// consume or close the original body. A nil result means the body is not
+// replayable, so retrying would risk sending an empty or partial payload.
+func cloneRequestForReplay(req *http.Request) *http.Request {
+	if req == nil {
+		return nil
+	}
+	clone := req.Clone(req.Context())
+	if req.Body == nil || req.Body == http.NoBody {
+		clone.Body = req.Body
+		return clone
+	}
+	if req.GetBody == nil {
+		return nil
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil
+	}
+	clone.Body = body
+	return clone
+}
+
 func (s *h2fpUpstreamService) enabled() bool {
 	if s.cfg == nil {
 		return false
@@ -122,16 +170,19 @@ func (s *h2fpUpstreamService) enabled() bool {
 // ---- client cache ----
 
 type h2fpClientKey struct {
-	accountID   int64
-	proxyKey    string
-	profileName string
+	accountID int64
+	proxyKey  string
+	// profileID is a stable content hash of the TLS profile's ClientHello
+	// fields (see profileCacheKey). Editing or rebinding a profile therefore
+	// builds a fresh client instead of reusing a stale one.
+	profileID string
 }
 
-func (s *h2fpUpstreamService) acquireClient(accountID int64, proxyURL string, profile *tlsfingerprint.Profile) (*req.Client, error) {
+func (s *h2fpUpstreamService) acquireClient(accountID int64, proxyURL string, profile *tlsfingerprint.Profile, accountConcurrency int) (*req.Client, error) {
 	key := h2fpClientKey{
-		accountID:   accountID,
-		proxyKey:    normalizeProxyKey(proxyURL),
-		profileName: profileNameOrEmpty(profile),
+		accountID: accountID,
+		proxyKey:  normalizeProxyKey(proxyURL),
+		profileID: profileCacheKey(profile),
 	}
 	if cached, ok := s.clients.Load(key); ok {
 		if c, ok := cached.(*req.Client); ok {
@@ -145,6 +196,11 @@ func (s *h2fpUpstreamService) acquireClient(accountID int64, proxyURL string, pr
 	if err != nil {
 		return nil, err
 	}
+	c.GetClient().CheckRedirect = s.h2RedirectChecker
+	// Mirror the stdlib path's connection-pool sizing (including the
+	// account-concurrency scaling) so the h2fp layer reuses connections the
+	// same way instead of relying on req's defaults.
+	s.applyPoolToClient(c, accountConcurrency)
 	actual, _ := s.clients.LoadOrStore(key, c)
 	if cached, ok := actual.(*req.Client); ok {
 		return cached, nil
@@ -152,11 +208,39 @@ func (s *h2fpUpstreamService) acquireClient(accountID int64, proxyURL string, pr
 	return c, nil
 }
 
-func profileNameOrEmpty(p *tlsfingerprint.Profile) string {
-	if p == nil {
-		return ""
+func (s *h2fpUpstreamService) h2RedirectChecker(req *http.Request, via []*http.Request) error {
+	if req != nil && service.HTTPUpstreamRedirectsDisabled(req.Context()) {
+		return http.ErrUseLastResponse
 	}
-	return p.Name
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return validateRequestHost(req, s.cfg)
+}
+
+// applyPoolToClient replicates the stdlib transport's pool settings
+// (defaultPoolSettings + account-concurrency scaling, see httpUpstreamService.
+// resolvePoolSettings) on a req client. All five fields live on req's shared
+// transport.Options, so setting them also applies to the internal http2
+// transport.
+func (s *h2fpUpstreamService) applyPoolToClient(c *req.Client, accountConcurrency int) {
+	if s.cfg == nil {
+		return
+	}
+	settings := defaultPoolSettings(s.cfg)
+	if accountConcurrency > 0 {
+		settings.maxIdleConns = accountConcurrency
+		settings.maxIdleConnsPerHost = accountConcurrency
+		settings.maxConnsPerHost = accountConcurrency
+	}
+	tr := c.GetTransport()
+	tr.SetMaxIdleConns(settings.maxIdleConns)
+	// No dedicated setter for this field in req v3.57.0; it is exported on the
+	// embedded transport.Options, so set it directly.
+	tr.MaxIdleConnsPerHost = settings.maxIdleConnsPerHost
+	tr.SetMaxConnsPerHost(settings.maxConnsPerHost)
+	tr.SetIdleConnTimeout(settings.idleConnTimeout)
+	tr.SetResponseHeaderTimeout(settings.responseHeaderTimeout)
 }
 
 func normalizeProxyKey(proxyURL string) string {
