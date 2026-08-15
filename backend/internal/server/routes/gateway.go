@@ -40,6 +40,13 @@ func RegisterGatewayRoutes(
 	endpointNorm := handler.InboundEndpointMiddleware()
 	compositeTarget := compositeTargetPlatformMiddleware(compositeResolver)
 	compositeGeminiTarget := compositeGeminiTargetPlatformMiddleware(compositeResolver)
+	claudeTelemetry := newClaudeCodeTelemetryProxy(claudeCodeTelemetryHTTPClient, claudeCodeTelemetryUpstreamBaseURL)
+
+	// Claude Code resolves first-party event logging against ANTHROPIC_BASE_URL.
+	// Authenticate the caller as a Sub2API user, then forward the payload without
+	// leaking the gateway credential to Anthropic.
+	r.POST("/api/event_logging/batch", bodyLimit, gin.HandlerFunc(apiKeyAuth), claudeTelemetry)
+	r.POST("/api/event_logging/v2/batch", bodyLimit, gin.HandlerFunc(apiKeyAuth), claudeTelemetry)
 
 	// 未分组 Key 拦截中间件（按协议格式区分错误响应）
 	requireGroupAnthropic := middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter)

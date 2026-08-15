@@ -76,6 +76,19 @@ func TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesClaudeCodeTelemetryPathsAreRegistered(t *testing.T) {
+	router := newGatewayRoutesTestRouter()
+	registered := make(map[string]bool)
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodPost {
+			registered[route.Path] = true
+		}
+	}
+
+	require.True(t, registered["/api/event_logging/batch"])
+	require.True(t, registered["/api/event_logging/v2/batch"])
+}
+
 func TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 	registered := make(map[string]bool)

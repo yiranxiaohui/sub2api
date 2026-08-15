@@ -50,6 +50,26 @@ func TestAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	require.Zero(t, calls.Load())
 }
 
+func TestIsClaudeCodeTelemetryRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   bool
+	}{
+		{name: "legacy batch", method: http.MethodPost, path: "/api/event_logging/batch", want: true},
+		{name: "v2 batch", method: http.MethodPost, path: "/api/event_logging/v2/batch", want: true},
+		{name: "wrong method", method: http.MethodGet, path: "/api/event_logging/v2/batch", want: false},
+		{name: "unknown version", method: http.MethodPost, path: "/api/event_logging/v3/batch", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isClaudeCodeTelemetryRequest(tt.method, tt.path))
+		})
+	}
+}
+
 func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

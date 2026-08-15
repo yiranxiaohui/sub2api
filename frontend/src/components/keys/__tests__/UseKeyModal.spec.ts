@@ -21,6 +21,35 @@ vi.mock('@/composables/useClipboard', () => ({
 import UseKeyModal from '../UseKeyModal.vue'
 
 describe('UseKeyModal', () => {
+  it('keeps telemetry enabled in generated Claude Code setup', () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-claude-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'antigravity'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    expect(codeBlocks.join('\n')).not.toContain('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
+
+    const settingsConfig = codeBlocks.find((content) => content.includes('"$schema"'))
+    expect(settingsConfig).toBeDefined()
+    const parsedSettings = JSON.parse(settingsConfig!)
+    expect(parsedSettings.env).not.toHaveProperty('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
+  })
+
   it('renders Grok Build and OpenCode setup for Grok groups', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
@@ -144,6 +173,7 @@ describe('UseKeyModal', () => {
     let codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
     expect(codeBlocks.join('\n')).toContain('ANTHROPIC_BASE_URL="https://example.com"')
     expect(codeBlocks.join('\n')).toContain('ANTHROPIC_AUTH_TOKEN="sk-grok-claude-test"')
+    expect(codeBlocks.join('\n')).not.toContain('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
     const unixConfig = codeBlocks.find((content) => content.startsWith('export ANTHROPIC_BASE_URL'))
     expect(unixConfig).toBeDefined()
     for (const name of [
@@ -161,6 +191,7 @@ describe('UseKeyModal', () => {
     const parsedSettings = JSON.parse(settingsConfig!)
     expect(parsedSettings.$schema).toBe('https://json.schemastore.org/claude-code-settings.json')
     expect(parsedSettings.env.ANTHROPIC_MODEL).toBe('grok-4.5')
+    expect(parsedSettings.env).not.toHaveProperty('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
     expect(wrapper.text()).toContain('keys.useKeyModal.claudeSettingsHint')
     expect(wrapper.text()).toContain('keys.useKeyModal.grok.claudeNote')
     expect(wrapper.find('nav[aria-label="Client"]').classes()).toContain('min-w-max')
