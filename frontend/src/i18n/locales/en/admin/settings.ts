@@ -1395,6 +1395,7 @@ export default {
     tlsFingerprintProfiles: {
       title: 'TLS Fingerprint Profiles',
       description: 'Manage TLS fingerprint profiles for simulating specific client TLS handshake characteristics',
+      generateRecommended: 'Generate Recommended',
       createProfile: 'Create Profile',
       editProfile: 'Edit Profile',
       deleteProfile: 'Delete Profile',
@@ -1442,6 +1443,9 @@ export default {
       createSuccess: 'Profile created successfully',
       updateSuccess: 'Profile updated successfully',
       deleteSuccess: 'Profile deleted successfully',
+      generateSuccess: 'Generated {count} recommended profile; it can be shared by multiple accounts',
+      generateAlreadyInstalled: 'The recommended profile is already installed',
+      generateFailed: 'Failed to generate recommended profile',
       loadFailed: 'Failed to load profiles',
       saveFailed: 'Failed to save profile',
       deleteFailed: 'Failed to delete profile'

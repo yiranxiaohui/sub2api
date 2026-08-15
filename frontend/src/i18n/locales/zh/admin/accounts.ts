@@ -893,8 +893,8 @@ export default {
         },
         tlsFingerprint: {
           label: 'TLS 指纹模拟',
-          hint: '模拟 Node.js/Claude Code 客户端的 TLS 指纹',
-          defaultProfile: '内置默认',
+          hint: '自动使用维护好的 Claude Code 运行时指纹；同版本客户端共用指纹是正常现象，无需为每个账号采集设备',
+          defaultProfile: '自动（推荐，无需采集）',
           randomProfile: '随机'
         },
         sessionIdMasking: {

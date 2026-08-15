@@ -829,8 +829,8 @@ export default {
         },
         tlsFingerprint: {
           label: 'TLS Fingerprint Simulation',
-          hint: 'Simulate Node.js/Claude Code client TLS fingerprint',
-          defaultProfile: 'Built-in Default',
+          hint: 'Automatically use the maintained Claude Code runtime fingerprint; clients on the same version normally share it, so per-account device capture is unnecessary',
+          defaultProfile: 'Automatic (recommended, no capture)',
           randomProfile: 'Random'
         },
         sessionIdMasking: {

@@ -1389,6 +1389,7 @@ export default {
     tlsFingerprintProfiles: {
       title: 'TLS 指纹模板',
       description: '管理 TLS 指纹模板，用于模拟特定客户端的 TLS 握手特征',
+      generateRecommended: '生成推荐模板',
       createProfile: '创建模板',
       editProfile: '编辑模板',
       deleteProfile: '删除模板',
@@ -1436,6 +1437,9 @@ export default {
       createSuccess: '模板创建成功',
       updateSuccess: '模板更新成功',
       deleteSuccess: '模板删除成功',
+      generateSuccess: '已生成 {count} 个推荐模板，可供多个账号共用',
+      generateAlreadyInstalled: '推荐模板已经存在，无需重复生成',
+      generateFailed: '生成推荐模板失败',
       loadFailed: '加载模板失败',
       saveFailed: '保存模板失败',
       deleteFailed: '删除模板失败'

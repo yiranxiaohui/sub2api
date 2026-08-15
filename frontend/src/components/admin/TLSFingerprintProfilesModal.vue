@@ -11,10 +11,20 @@
         <p class="text-sm text-gray-500 dark:text-gray-400">
           {{ t('admin.tlsFingerprintProfiles.description') }}
         </p>
-        <button @click="showCreateModal = true" class="btn btn-primary btn-sm">
-          <Icon name="plus" size="sm" class="mr-1" />
-          {{ t('admin.tlsFingerprintProfiles.createProfile') }}
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            @click="handleGenerateRecommended"
+            :disabled="generating"
+            class="btn btn-secondary btn-sm"
+          >
+            <Icon :name="generating ? 'refresh' : 'sparkles'" size="sm" :class="['mr-1', { 'animate-spin': generating }]" />
+            {{ t('admin.tlsFingerprintProfiles.generateRecommended') }}
+          </button>
+          <button @click="showCreateModal = true" class="btn btn-primary btn-sm">
+            <Icon name="plus" size="sm" class="mr-1" />
+            {{ t('admin.tlsFingerprintProfiles.createProfile') }}
+          </button>
+        </div>
       </div>
 
       <!-- Profiles Table -->
@@ -353,6 +363,7 @@ const appStore = useAppStore()
 const profiles = ref<TLSFingerprintProfile[]>([])
 const loading = ref(false)
 const submitting = ref(false)
+const generating = ref(false)
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showDeleteDialog = ref(false)
@@ -395,6 +406,24 @@ const loadProfiles = async () => {
     console.error('Error loading TLS fingerprint profiles:', error)
   } finally {
     loading.value = false
+  }
+}
+
+const handleGenerateRecommended = async () => {
+  generating.value = true
+  try {
+    const result = await adminAPI.tlsFingerprintProfiles.generateRecommended()
+    if (result.created > 0) {
+      appStore.showSuccess(t('admin.tlsFingerprintProfiles.generateSuccess', { count: result.created }))
+    } else {
+      appStore.showSuccess(t('admin.tlsFingerprintProfiles.generateAlreadyInstalled'))
+    }
+    await loadProfiles()
+  } catch (error: any) {
+    appStore.showError(error.response?.data?.detail || t('admin.tlsFingerprintProfiles.generateFailed'))
+    console.error('Error generating recommended TLS fingerprint profiles:', error)
+  } finally {
+    generating.value = false
   }
 }
 

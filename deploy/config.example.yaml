@@ -575,8 +575,10 @@ gateway:
     # 全量重建周期（秒），0 表示禁用
     full_rebuild_interval_seconds: 300
   # TLS fingerprint simulation / TLS 指纹伪装
-  # Default profile "claude_cli_v2" simulates Node.js 20.x
-  # 默认模板 "claude_cli_v2" 模拟 Node.js 20.x 指纹
+  # The built-in profile simulates the maintained Claude Code / Node.js 24.x baseline.
+  # TLS fingerprints identify runtimes, not physical devices; one profile can serve many accounts.
+  # 内置模板模拟维护中的 Claude Code / Node.js 24.x 基线。
+  # TLS 指纹标识客户端运行时，而非物理设备；一个模板可供多个账号共用。
   tls_fingerprint:
     enabled: true
     # profiles:

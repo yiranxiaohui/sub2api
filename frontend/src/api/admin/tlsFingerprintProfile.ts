@@ -62,6 +62,11 @@ export interface UpdateProfileRequest {
   extensions?: number[]
 }
 
+export interface GenerateProfilesResponse {
+  profiles: TLSFingerprintProfile[]
+  created: number
+}
+
 export async function list(): Promise<TLSFingerprintProfile[]> {
   const { data } = await apiClient.get<TLSFingerprintProfile[]>('/admin/tls-fingerprint-profiles')
   return data
@@ -74,6 +79,11 @@ export async function getById(id: number): Promise<TLSFingerprintProfile> {
 
 export async function create(profileData: CreateProfileRequest): Promise<TLSFingerprintProfile> {
   const { data } = await apiClient.post<TLSFingerprintProfile>('/admin/tls-fingerprint-profiles', profileData)
+  return data
+}
+
+export async function generateRecommended(): Promise<GenerateProfilesResponse> {
+  const { data } = await apiClient.post<GenerateProfilesResponse>('/admin/tls-fingerprint-profiles/generate')
   return data
 }
 
@@ -91,6 +101,7 @@ export const tlsFingerprintProfileAPI = {
   list,
   getById,
   create,
+  generateRecommended,
   update,
   delete: deleteProfile
 }

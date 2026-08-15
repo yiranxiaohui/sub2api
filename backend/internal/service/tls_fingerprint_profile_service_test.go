@@ -1,10 +1,51 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/model"
 )
+
+type memoryTLSFingerprintProfileRepository struct {
+	profiles []*model.TLSFingerprintProfile
+	nextID   int64
+}
+
+func (r *memoryTLSFingerprintProfileRepository) List(context.Context) ([]*model.TLSFingerprintProfile, error) {
+	return append([]*model.TLSFingerprintProfile(nil), r.profiles...), nil
+}
+
+func (r *memoryTLSFingerprintProfileRepository) GetByID(_ context.Context, id int64) (*model.TLSFingerprintProfile, error) {
+	for _, profile := range r.profiles {
+		if profile.ID == id {
+			return profile, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *memoryTLSFingerprintProfileRepository) Create(_ context.Context, profile *model.TLSFingerprintProfile) (*model.TLSFingerprintProfile, error) {
+	for _, existing := range r.profiles {
+		if existing.Name == profile.Name {
+			return nil, fmt.Errorf("duplicate profile %q", profile.Name)
+		}
+	}
+	r.nextID++
+	created := *profile
+	created.ID = r.nextID
+	r.profiles = append(r.profiles, &created)
+	return &created, nil
+}
+
+func (r *memoryTLSFingerprintProfileRepository) Update(_ context.Context, profile *model.TLSFingerprintProfile) (*model.TLSFingerprintProfile, error) {
+	return profile, nil
+}
+
+func (r *memoryTLSFingerprintProfileRepository) Delete(context.Context, int64) error {
+	return nil
+}
 
 // randomModeAccount builds an Anthropic OAuth account with the
 // tls_fingerprint_profile_id = -1 ("random") mode enabled.
@@ -70,5 +111,42 @@ func TestResolveTLSProfile_RandomMode_DisabledAccountReturnsNil(t *testing.T) {
 	}
 	if got := svc.ResolveTLSProfile(acct); got != nil {
 		t.Errorf("expected nil for an account without enable_tls_fingerprint, got %v", got)
+	}
+}
+
+func TestGenerateRecommendedProfiles_Idempotent(t *testing.T) {
+	repo := &memoryTLSFingerprintProfileRepository{}
+	svc := &TLSFingerprintProfileService{
+		repo:       repo,
+		localCache: make(map[int64]*model.TLSFingerprintProfile),
+	}
+
+	first, err := svc.GenerateRecommendedProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("first generation failed: %v", err)
+	}
+	if first.Created != 1 || len(first.Profiles) != 1 {
+		t.Fatalf("first generation = created %d, profiles %d; want 1, 1", first.Created, len(first.Profiles))
+	}
+	generated := first.Profiles[0]
+	if generated.Name != "Claude Code / Node.js 24.x" {
+		t.Fatalf("generated profile name = %q", generated.Name)
+	}
+	if len(generated.CipherSuites) != 17 || len(generated.Extensions) != 14 {
+		t.Fatalf("generated profile is incomplete: %d cipher suites, %d extensions", len(generated.CipherSuites), len(generated.Extensions))
+	}
+	if len(generated.ALPNProtocols) != 0 {
+		t.Fatalf("generated ALPN must remain transport-aware, got %v", generated.ALPNProtocols)
+	}
+
+	second, err := svc.GenerateRecommendedProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("second generation failed: %v", err)
+	}
+	if second.Created != 0 || len(second.Profiles) != 1 {
+		t.Fatalf("second generation = created %d, profiles %d; want 0, 1", second.Created, len(second.Profiles))
+	}
+	if len(repo.profiles) != 1 {
+		t.Fatalf("idempotent generation stored %d profiles; want 1", len(repo.profiles))
 	}
 }

@@ -124,6 +124,19 @@ func (h *TLSFingerprintProfileHandler) Create(c *gin.Context) {
 	response.Success(c, created)
 }
 
+// GenerateRecommended installs maintained Claude Code profiles without
+// requiring administrators to collect fingerprints from physical devices.
+// POST /api/v1/admin/tls-fingerprint-profiles/generate
+func (h *TLSFingerprintProfileHandler) GenerateRecommended(c *gin.Context) {
+	result, err := h.service.GenerateRecommendedProfiles(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // Update 更新模板（支持部分更新）
 // PUT /api/v1/admin/tls-fingerprint-profiles/:id
 func (h *TLSFingerprintProfileHandler) Update(c *gin.Context) {

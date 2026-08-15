@@ -39,6 +39,13 @@ type TLSFingerprintProfileService struct {
 	localMu    sync.RWMutex
 }
 
+// GenerateTLSFingerprintProfilesResult describes an idempotent installation
+// of the recommended built-in TLS profiles.
+type GenerateTLSFingerprintProfilesResult struct {
+	Profiles []*model.TLSFingerprintProfile `json:"profiles"`
+	Created  int                            `json:"created"`
+}
+
 // NewTLSFingerprintProfileService 创建 TLS 指纹模板服务
 func NewTLSFingerprintProfileService(
 	repo TLSFingerprintProfileRepository,
@@ -128,6 +135,70 @@ func (s *TLSFingerprintProfileService) Delete(ctx context.Context, id int64) err
 	s.invalidateAndNotify(refreshCtx)
 
 	return nil
+}
+
+// GenerateRecommendedProfiles installs the maintained Claude Code profile
+// catalog without requiring the administrator to capture ClientHello packets
+// from physical devices. Existing profiles with the same name are preserved,
+// making the operation safe to run repeatedly.
+func (s *TLSFingerprintProfileService) GenerateRecommendedProfiles(ctx context.Context) (*GenerateTLSFingerprintProfilesResult, error) {
+	existing, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	byName := make(map[string]*model.TLSFingerprintProfile, len(existing))
+	for _, profile := range existing {
+		if profile != nil {
+			byName[profile.Name] = profile
+		}
+	}
+
+	builtIn := tlsfingerprint.BuiltInDefaultProfile()
+	description := "Maintained Sub2API baseline for Claude Code / Node.js 24.x; reusable across accounts and does not require per-device capture"
+	recommended := []*model.TLSFingerprintProfile{
+		{
+			Name:                builtIn.Name,
+			Description:         &description,
+			EnableGREASE:        builtIn.EnableGREASE,
+			CipherSuites:        builtIn.CipherSuites,
+			Curves:              builtIn.Curves,
+			PointFormats:        builtIn.PointFormats,
+			SignatureAlgorithms: builtIn.SignatureAlgorithms,
+			ALPNProtocols:       builtIn.ALPNProtocols,
+			SupportedVersions:   builtIn.SupportedVersions,
+			KeyShareGroups:      builtIn.KeyShareGroups,
+			PSKModes:            builtIn.PSKModes,
+			Extensions:          builtIn.Extensions,
+		},
+	}
+
+	result := &GenerateTLSFingerprintProfilesResult{
+		Profiles: make([]*model.TLSFingerprintProfile, 0, len(recommended)),
+	}
+	for _, profile := range recommended {
+		if found := byName[profile.Name]; found != nil {
+			result.Profiles = append(result.Profiles, found)
+			continue
+		}
+		if err := profile.Validate(); err != nil {
+			return nil, err
+		}
+		created, createErr := s.repo.Create(ctx, profile)
+		if createErr != nil {
+			return nil, createErr
+		}
+		result.Profiles = append(result.Profiles, created)
+		result.Created++
+	}
+
+	if result.Created > 0 {
+		refreshCtx, cancel := s.newCacheRefreshContext()
+		defer cancel()
+		s.invalidateAndNotify(refreshCtx)
+	}
+
+	return result, nil
 }
 
 // --- 热路径：运行时 Profile 查找 ---
