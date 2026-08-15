@@ -93,7 +93,7 @@ type Config struct {
 	Concurrency             ConcurrencyConfig             `mapstructure:"concurrency"`
 	TokenRefresh            TokenRefreshConfig            `mapstructure:"token_refresh"`
 	RunMode                 string                        `mapstructure:"run_mode" yaml:"run_mode"`
-	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
+	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Tokyo", "UTC"
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
@@ -1490,7 +1490,7 @@ func (d *DatabaseConfig) DSN() string {
 // DSNWithTimezone returns DSN with timezone setting
 func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
 	if tz == "" {
-		tz = "Asia/Shanghai"
+		tz = "Asia/Tokyo"
 	}
 	// 当密码为空时不包含 password 参数，避免 libpq 解析错误
 	if d.Password == "" {
@@ -1753,6 +1753,12 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
+	}
+	// TZ is the standard process/container timezone variable, while Viper's
+	// automatic mapping for the "timezone" key only checks TIMEZONE. Apply TZ
+	// explicitly so existing installations follow the Compose-level setting.
+	if tz := strings.TrimSpace(os.Getenv("TZ")); tz != "" {
+		cfg.Timezone = tz
 	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
@@ -2228,8 +2234,8 @@ func setDefaults() {
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
 
-	// Timezone (default to Asia/Shanghai for Chinese users)
-	viper.SetDefault("timezone", "Asia/Shanghai")
+	// Timezone (default to Japan Standard Time)
+	viper.SetDefault("timezone", "Asia/Tokyo")
 
 	// API Key auth cache
 	viper.SetDefault("api_key_auth_cache.l1_size", 65535)

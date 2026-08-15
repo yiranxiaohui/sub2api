@@ -5,6 +5,23 @@ import (
 	"time"
 )
 
+func TestInitEmptyUsesTokyoDefault(t *testing.T) {
+	if err := Init(""); err != nil {
+		t.Fatalf("Init with empty timezone failed: %v", err)
+	}
+	t.Cleanup(func() { _ = Init("UTC") })
+
+	if got := Name(); got != "Asia/Tokyo" {
+		t.Fatalf("Name() = %q, want Asia/Tokyo", got)
+	}
+	if got := Location().String(); got != "Asia/Tokyo" {
+		t.Fatalf("Location() = %q, want Asia/Tokyo", got)
+	}
+	if got := UTCOffset(); got != "+09:00" {
+		t.Fatalf("UTCOffset() = %q, want +09:00", got)
+	}
+}
+
 func TestInit(t *testing.T) {
 	// Test with valid timezone
 	err := Init("Asia/Shanghai")

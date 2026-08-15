@@ -69,6 +69,21 @@ func TestSelectPersona_ValidatesOutput(t *testing.T) {
 	}
 }
 
+func TestSelectPersona_DefaultPoolAlwaysUsesTokyoTimezone(t *testing.T) {
+	pool := DefaultPool()
+	mustValidate(t, pool)
+
+	for i := int64(0); i < 1000; i++ {
+		p, err := SelectPersona(i, pool)
+		if err != nil {
+			t.Fatalf("account %d: %v", i, err)
+		}
+		if p.Timezone != "Asia/Tokyo" {
+			t.Fatalf("account %d: Timezone = %q, want Asia/Tokyo", i, p.Timezone)
+		}
+	}
+}
+
 func TestSelectPersona_DifferentAccountsDifferentPersonas(t *testing.T) {
 	pool := DefaultPool()
 	mustValidate(t, pool)

@@ -18,10 +18,10 @@ var (
 
 // Init initializes the global timezone setting.
 // This should be called once at application startup.
-// Example timezone values: "Asia/Shanghai", "America/New_York", "UTC"
+// Example timezone values: "Asia/Tokyo", "America/New_York", "UTC"
 func Init(tz string) error {
 	if tz == "" {
-		tz = "Asia/Shanghai" // Default timezone
+		tz = "Asia/Tokyo" // Default timezone
 	}
 
 	loc, err := time.LoadLocation(tz)
@@ -81,7 +81,7 @@ func Name() string {
 	return tzName
 }
 
-// UTCOffset returns the current UTC offset of the configured timezone, e.g. "+08:00".
+// UTCOffset returns the current UTC offset of the configured timezone, e.g. "+09:00".
 func UTCOffset() string {
 	return getUTCOffset(Location())
 }

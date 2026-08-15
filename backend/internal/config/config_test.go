@@ -49,6 +49,28 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+func TestLoadTimezoneDefaultsAndEnvironmentOverride(t *testing.T) {
+	t.Run("Tokyo by default", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		t.Setenv("TZ", "")
+		t.Setenv("TIMEZONE", "")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.Equal(t, "Asia/Tokyo", cfg.Timezone)
+	})
+
+	t.Run("TZ overrides the default", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		t.Setenv("TZ", "UTC")
+		t.Setenv("TIMEZONE", "Asia/Tokyo")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.Equal(t, "UTC", cfg.Timezone)
+	})
+}
+
 func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()
@@ -1210,7 +1232,7 @@ func TestConfigAddressHelpers(t *testing.T) {
 		t.Fatalf("DatabaseConfig.DSNWithTimezone() should omit password when empty")
 	}
 
-	if !strings.Contains(dbCfg.DSNWithTimezone(""), "TimeZone=Asia/Shanghai") {
+	if !strings.Contains(dbCfg.DSNWithTimezone(""), "TimeZone=Asia/Tokyo") {
 		t.Fatalf("DatabaseConfig.DSNWithTimezone() should use default timezone")
 	}
 	if !strings.Contains(dbCfg.DSNWithTimezone("UTC"), "TimeZone=UTC") {

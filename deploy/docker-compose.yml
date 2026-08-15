@@ -118,9 +118,9 @@ services:
       # - Usage statistics "today" boundary
       # - Subscription expiry times
       # - Log timestamps
-      # Common values: Asia/Shanghai, America/New_York, Europe/London, UTC
+      # Common values: Asia/Tokyo, America/New_York, Europe/London, UTC
       # =======================================================================
-      - TZ=${TZ:-Asia/Shanghai}
+      - TZ=${TZ:-Asia/Tokyo}
 
       # =======================================================================
       # Gemini OAuth Configuration (for Gemini accounts)
@@ -229,7 +229,7 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-sub2api}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - POSTGRES_DB=${POSTGRES_DB:-sub2api}
-      - TZ=${TZ:-Asia/Shanghai}
+      - TZ=${TZ:-Asia/Tokyo}
     networks:
       - sub2api-network
     healthcheck:
@@ -270,7 +270,7 @@ services:
         --appendfsync everysec \
         ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
     environment:
-      - TZ=${TZ:-Asia/Shanghai}
+      - TZ=${TZ:-Asia/Tokyo}
       # REDISCLI_AUTH is used by redis-cli for authentication (safer than -a flag)
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
     networks:

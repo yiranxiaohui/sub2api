@@ -243,21 +243,19 @@ func defaultBetaVariants() []BetaVariant {
 	}
 }
 
-// defaultLocaleVariants. NOTE: locale should ultimately be chosen to match
-// the proxy IP geography. SelectPersona uses pool order; callers can post-
-// filter by proxy region if known.
+// defaultLocaleVariants keeps every generated device persona in the Tokyo
+// timezone. Language diversity remains independent because a user can run an
+// English or another localized CLI while physically located in Japan.
 func defaultLocaleVariants() []LocaleVariant {
 	return []LocaleVariant{
-		{Lang: "en-US", TZ: "America/Los_Angeles", Weight: 25},
-		{Lang: "en-US", TZ: "America/New_York", Weight: 20},
-		{Lang: "en-US", TZ: "America/Chicago", Weight: 10},
-		{Lang: "en-GB", TZ: "Europe/London", Weight: 10},
-		{Lang: "de-DE", TZ: "Europe/Berlin", Weight: 5},
-		{Lang: "fr-FR", TZ: "Europe/Paris", Weight: 4},
-		{Lang: "zh-CN", TZ: "Asia/Shanghai", Weight: 12},
+		{Lang: "en-US", TZ: "Asia/Tokyo", Weight: 55},
+		{Lang: "en-GB", TZ: "Asia/Tokyo", Weight: 10},
+		{Lang: "de-DE", TZ: "Asia/Tokyo", Weight: 5},
+		{Lang: "fr-FR", TZ: "Asia/Tokyo", Weight: 4},
+		{Lang: "zh-CN", TZ: "Asia/Tokyo", Weight: 12},
 		{Lang: "ja-JP", TZ: "Asia/Tokyo", Weight: 8},
-		{Lang: "ko-KR", TZ: "Asia/Seoul", Weight: 3},
-		{Lang: "pt-BR", TZ: "America/Sao_Paulo", Weight: 3},
+		{Lang: "ko-KR", TZ: "Asia/Tokyo", Weight: 3},
+		{Lang: "pt-BR", TZ: "Asia/Tokyo", Weight: 3},
 	}
 }
 

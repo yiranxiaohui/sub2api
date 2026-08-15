@@ -735,7 +735,7 @@ func (h *GroupHandler) GetStats(c *gin.Context) {
 }
 
 // GetUsageSummary returns today's and cumulative cost for all groups.
-// GET /api/v1/admin/groups/usage-summary?timezone=Asia/Shanghai
+// GET /api/v1/admin/groups/usage-summary?timezone=Asia/Tokyo
 func (h *GroupHandler) GetUsageSummary(c *gin.Context) {
 	userTZ := c.Query("timezone")
 	now := timezone.NowInUserLocation(userTZ)

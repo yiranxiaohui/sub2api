@@ -843,7 +843,7 @@ func (s *OpsScheduledReportService) getLastRunAt(ctx context.Context, reportType
 	last := time.Unix(sec, 0)
 	// Cron schedules are interpreted in the configured timezone (s.loc). Ensure the base time
 	// passed into cron.Next() uses the same location; otherwise the job will drift by timezone
-	// offset (e.g. Asia/Shanghai default would run 8h later after the first execution).
+	// offset (e.g. Asia/Tokyo default would run 9h later after the first execution).
 	if s.loc != nil {
 		return last.In(s.loc)
 	}
