@@ -55,7 +55,7 @@ func newClaudeCodeTelemetryProxy(client *http.Client, upstreamBaseURL string) gi
 			c.JSON(http.StatusBadGateway, gin.H{"error": "telemetry upstream unavailable"})
 			return
 		}
-		defer upstreamResp.Body.Close()
+		defer func() { _ = upstreamResp.Body.Close() }()
 
 		copyResponseHeader(c.Writer.Header(), upstreamResp.Header, "Content-Type")
 		copyResponseHeader(c.Writer.Header(), upstreamResp.Header, "Retry-After")
