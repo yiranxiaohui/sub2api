@@ -31,13 +31,16 @@ type updateServiceGitHubClientStub struct {
 	release        *GitHubRelease
 	recentReleases []*GitHubRelease
 	recentErr      error
+	repos          []string
 }
 
-func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchLatestRelease(_ context.Context, repo string) (*GitHubRelease, error) {
+	s.repos = append(s.repos, repo)
 	return s.release, nil
 }
 
-func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchRecentReleases(_ context.Context, repo string, _ int) ([]*GitHubRelease, error) {
+	s.repos = append(s.repos, repo)
 	return s.recentReleases, s.recentErr
 }
 
@@ -184,4 +187,20 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrRollbackVersionNotAllowed)
 	require.Contains(t, err.Error(), "no compatible release found")
+}
+
+func TestUpdateServiceUsesForkReleaseRepository(t *testing.T) {
+	client := &updateServiceGitHubClientStub{
+		release:        &GitHubRelease{TagName: "v0.1.10", Name: "v0.1.10"},
+		recentReleases: []*GitHubRelease{{TagName: "v0.1.9"}},
+	}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.1.10", "release")
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	require.Equal(t, "0.1.10", info.LatestVersion)
+	require.False(t, info.HasUpdate)
+	_, err = svc.ListRollbackVersions(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"yiranxiaohui/sub2api", "yiranxiaohui/sub2api"}, client.repos)
 }
