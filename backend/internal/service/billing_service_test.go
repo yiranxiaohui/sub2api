@@ -2069,3 +2069,18 @@ func TestNewModelPricingAliasesRetainExplicitOverrides(t *testing.T) {
 		require.Same(t, zero, svc.GetModelPricing(model))
 	}
 }
+
+func TestCalculateCost_ClaudeSonnet55FallbackPricing(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 1000, CacheCreationTokens: 1000, CacheCreation5mTokens: 400, CacheCreation1hTokens: 600}
+	for _, model := range []string{"claude-sonnet-5-5", "anthropic/claude-sonnet-5.5", "anthropic.claude-sonnet-5-5"} {
+		t.Run(model, func(t *testing.T) {
+			cost, err := svc.CalculateCost(model, tokens, 1)
+			require.NoError(t, err)
+			require.InDelta(t, 1000*2e-6, cost.InputCost, 1e-10)
+			require.InDelta(t, 400*2.5e-6+600*4e-6, cost.CacheCreationCost, 1e-10)
+			require.InDelta(t, 1000*0.2e-6, cost.CacheReadCost, 1e-10)
+			require.InDelta(t, 500*10e-6, cost.OutputCost, 1e-10)
+		})
+	}
+}

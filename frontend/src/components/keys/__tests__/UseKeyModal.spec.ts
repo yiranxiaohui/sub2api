@@ -704,6 +704,11 @@ describe('UseKeyModal', () => {
     expect(model.options).toEqual({ thinking: { type: 'adaptive' }, effort: 'medium' })
     expect(model.variants.xhigh.effort).toBe('xhigh')
     expect(model.variants).not.toHaveProperty('none')
+    const sonnet = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models['claude-sonnet-5-5']
+    expect(sonnet.name).toBe('Claude Sonnet 5.5')
+    expect(sonnet.limit).toEqual({ context: 1000000, output: 128000 })
+    expect(sonnet.options).toEqual({ thinking: { type: 'adaptive' }, effort: 'high' })
+    expect(sonnet.variants.max.effort).toBe('max')
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {

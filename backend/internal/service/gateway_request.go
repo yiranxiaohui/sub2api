@@ -223,7 +223,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	parsed.MetadataUserID = gjson.Get(jsonStr, "metadata.user_id").String()
 
 	thinkingType := gjson.Get(jsonStr, "thinking.type").String()
-	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || (protocol == domain.PlatformAnthropic && claude.IsOpus55(parsed.Model))
+	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || (protocol == domain.PlatformAnthropic && claude.IsClaude55(parsed.Model))
 
 	parsed.OutputEffort = strings.TrimSpace(gjson.Get(jsonStr, "output_config.effort").String())
 	if protocol == domain.PlatformAnthropic {
@@ -566,22 +566,27 @@ func StripEmptyTextBlocks(body []byte) []byte {
 	return out
 }
 
-// validateClaudeOpus55Request rejects settings that the upstream cannot honor.
-// Call before OAuth mimicry can remove tool_choice or alter thinking defaults.
-func validateClaudeOpus55Request(body []byte, model string) error {
-	if !claude.IsOpus55(model) {
+// validateClaude55Request rejects settings that Claude 5.5 models (Opus 5.5
+// and Sonnet 5.5) cannot honor. Call before OAuth mimicry can remove
+// tool_choice or alter thinking defaults.
+func validateClaude55Request(body []byte, model string) error {
+	id := claude.Claude55ModelID(model)
+	if id == "" {
 		return nil
 	}
 	switch gjson.GetBytes(body, "thinking.type").String() {
 	case "disabled", "enabled":
-		return fmt.Errorf("claude-opus-5-5 requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort")
+		if claude.IsSonnet55(id) {
+			return fmt.Errorf("%s does not support disabled or manual thinking; omit thinking, use thinking.type=adaptive with output_config.effort, or thinking.type=between_tools for the lowest thinking setting", id)
+		}
+		return fmt.Errorf("%s requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort", id)
 	}
 	if gjson.GetBytes(body, "tool_choice").String() == "required" {
-		return fmt.Errorf("claude-opus-5-5 does not support forced tool_choice; use auto or none")
+		return fmt.Errorf("%s does not support forced tool_choice; use auto or none", id)
 	}
 	switch gjson.GetBytes(body, "tool_choice.type").String() {
 	case "any", "tool", "function", "custom", "namespace":
-		return fmt.Errorf("claude-opus-5-5 does not support forced tool_choice; use auto or none")
+		return fmt.Errorf("%s does not support forced tool_choice; use auto or none", id)
 	}
 	return nil
 }
@@ -604,7 +609,7 @@ func FilterThinkingBlocks(body []byte, mappedModel string) []byte {
 	if !ShouldPreFilterThinkingBlocks(mappedModel) {
 		return body
 	}
-	return filterThinkingBlocksInternal(body, claude.IsOpus55(mappedModel))
+	return filterThinkingBlocksInternal(body, claude.IsClaude55(mappedModel))
 }
 
 // FilterThinkingBlocksForRetry strips thinking-related constructs for retry scenarios.

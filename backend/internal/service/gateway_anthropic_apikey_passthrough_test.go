@@ -1812,3 +1812,37 @@ func TestOpus55ThinkingDefaultPreservesSignedHistory(t *testing.T) {
 	require.Equal(t, "omitted", gjson.GetBytes(out, "thinking.display").String())
 	require.JSONEq(t, gjson.GetBytes(body, "messages").Raw, gjson.GetBytes(out, "messages").Raw)
 }
+
+func TestSonnet55RejectsUnsupportedParametersBeforeMimicry(t *testing.T) {
+	for _, field := range []string{`"thinking":{"type":"disabled"}`, `"thinking":{"type":"enabled","budget_tokens":1024}`, `"tool_choice":{"type":"any"}`, `"tool_choice":{"type":"tool","name":"lookup"}`} {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		account := &Account{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+		body := []byte(`{"model":"claude-sonnet-5-5","messages":[{"role":"user","content":"hello"}],` + field + `}`)
+		parsed := &ParsedRequest{Model: "claude-sonnet-5-5", Body: NewRequestBodyRef(body)}
+		_, err := (&GatewayService{}).Forward(context.Background(), c, account, parsed)
+		require.Error(t, err)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "claude-sonnet-5-5")
+	}
+}
+
+func TestValidateClaude55RequestSonnet55ThinkingModes(t *testing.T) {
+	for _, field := range []string{``, `,"thinking":{"type":"adaptive"}`, `,"thinking":{"type":"between_tools"}`, `,"tool_choice":{"type":"auto"}`, `,"tool_choice":{"type":"none"}`} {
+		body := []byte(`{"model":"claude-sonnet-5-5","messages":[]` + field + `}`)
+		require.NoError(t, validateClaude55Request(body, "claude-sonnet-5-5"), field)
+	}
+	err := validateClaude55Request([]byte(`{"thinking":{"type":"disabled"}}`), "claude-sonnet-5-5")
+	require.ErrorContains(t, err, "between_tools")
+	require.NoError(t, validateClaude55Request([]byte(`{"thinking":{"type":"disabled"}}`), "claude-sonnet-5"))
+}
+
+func TestSonnet55ThinkingDefaultPreservesSignedHistory(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-5-5","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"signed"},{"type":"redacted_thinking","data":"encrypted"},{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}],"thinking":{"type":"between_tools"}}`)
+	require.Equal(t, string(body), string(FilterThinkingBlocks(body, "claude-sonnet-5-5")))
+	withoutThinking, _ := deleteJSONPathBytes(body, "thinking")
+	require.Equal(t, string(withoutThinking), string(FilterThinkingBlocks(withoutThinking, "anthropic/claude-sonnet-5.5")))
+	out, _ := normalizeClaudeOAuthRequestBody(withoutThinking, "claude-sonnet-5-5", claudeOAuthNormalizeOptions{})
+	require.False(t, gjson.GetBytes(out, "temperature").Exists())
+}

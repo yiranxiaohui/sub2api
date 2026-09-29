@@ -30,3 +30,15 @@ func TestDefaultModelsContainsOpus55(t *testing.T) {
 	}
 	t.Fatal("claude-opus-5-5 missing")
 }
+
+func TestDefaultModelsContainsSonnet55(t *testing.T) {
+	for _, model := range DefaultModels {
+		if model.ID == "claude-sonnet-5-5" {
+			if model.DisplayName != "Claude Sonnet 5.5" || model.CreatedAt != "2026-09-28T00:00:00Z" {
+				t.Fatalf("unexpected Sonnet 5.5 descriptor: %+v", model)
+			}
+			return
+		}
+	}
+	t.Fatal("claude-sonnet-5-5 missing")
+}

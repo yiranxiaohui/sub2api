@@ -14,7 +14,7 @@ import (
 // enables Anthropic platform groups to accept OpenAI Responses API requests
 // by converting them to the native /v1/messages format before forwarding upstream.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, claude.IsOpus55(req.Model))
+	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, claude.IsClaude55(req.Model))
 	if err != nil {
 		return nil, err
 	}
@@ -54,9 +54,10 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 		out.ToolChoice = tc
 	}
 
-	// Opus 5.5 always uses adaptive thinking. Resolve the upstream model before
-	// conversion, because client aliases need not identify a Claude model.
-	if claude.IsOpus55(req.Model) {
+	// Claude 5.5 models (Opus 5.5, Sonnet 5.5) always use adaptive thinking.
+	// Resolve the upstream model before conversion, because client aliases need
+	// not identify a Claude model.
+	if id := claude.Claude55ModelID(req.Model); id != "" {
 		var choice struct {
 			Type string `json:"type"`
 		}
@@ -66,16 +67,21 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 			}
 		}
 		if choice.Type == "any" || choice.Type == "tool" {
-			return nil, fmt.Errorf("claude-opus-5-5 does not support forced tool_choice; use auto or none")
+			return nil, fmt.Errorf("%s does not support forced tool_choice; use auto or none", id)
 		}
+		// Match each model's Claude API default effort: medium on Opus 5.5,
+		// high on Sonnet 5.5.
 		effort := "medium"
+		if claude.IsSonnet55(id) {
+			effort = "high"
+		}
 		if req.Reasoning != nil && req.Reasoning.Effort != "" {
 			effort = req.Reasoning.Effort
 		}
 		switch effort {
 		case "low", "medium", "high", "xhigh", "max":
 		default:
-			return nil, fmt.Errorf("claude-opus-5-5 does not support reasoning effort %q; use low, medium, high, xhigh or max", effort)
+			return nil, fmt.Errorf("%s does not support reasoning effort %q; use low, medium, high, xhigh or max", id, effort)
 		}
 		out.Thinking = &AnthropicThinking{Type: "adaptive"}
 		out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
