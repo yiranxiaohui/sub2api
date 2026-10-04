@@ -32,13 +32,14 @@ func TestDefaultModelsContainsOpus55(t *testing.T) {
 }
 
 func TestDefaultModelsContainsSonnet55(t *testing.T) {
+	t.Parallel()
+
 	for _, model := range DefaultModels {
 		if model.ID == "claude-sonnet-5-5" {
-			if model.DisplayName != "Claude Sonnet 5.5" || model.CreatedAt != "2026-09-28T00:00:00Z" {
-				t.Fatalf("unexpected Sonnet 5.5 descriptor: %+v", model)
-			}
+			require.Equal(t, "Claude Sonnet 5.5", model.DisplayName)
+			require.Equal(t, "2026-09-28T00:00:00Z", model.CreatedAt)
 			return
 		}
 	}
-	t.Fatal("claude-sonnet-5-5 missing")
+	t.Fatal("claude-sonnet-5-5 missing from DefaultModels")
 }

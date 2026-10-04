@@ -51,39 +51,23 @@ func IsSonnet55(model string) bool {
 	return normalizeEffortModelID(model) == "claude-sonnet-5-5"
 }
 
-// IsClaude55 identifies the Claude 5.5 generation (Opus 5.5 and Sonnet 5.5).
-// These models share the same request contract: thinking is on without a
-// thinking field, disabled/manual thinking and forced tool_choice return 400,
-// and thinking blocks are signed over the conversation and must be replayed
-// unchanged.
-func IsClaude55(model string) bool {
-	return Claude55ModelID(model) != ""
-}
-
-// Claude55ModelID returns the canonical Claude API ID of a Claude 5.5 model,
-// or an empty string when model is not part of the 5.5 generation.
-func Claude55ModelID(model string) string {
-	switch id := normalizeEffortModelID(model); id {
-	case "claude-opus-5-5", "claude-sonnet-5-5":
-		return id
-	}
-	return ""
-}
-
 func normalizeEffortModelID(model string) string {
 	id := strings.ToLower(strings.TrimSpace(model))
 	id = strings.TrimPrefix(id, "models/")
 	if slash := strings.IndexByte(id, '/'); slash >= 0 {
 		id = strings.TrimPrefix(strings.TrimSpace(id[slash+1:]), "models/")
 	}
+	for _, prefix := range []string{"us.", "eu.", "apac.", "jp.", "au.", "us-gov.", "global."} {
+		id = strings.TrimPrefix(id, prefix)
+	}
 	id = strings.TrimPrefix(id, "anthropic.")
 	id = strings.TrimSuffix(id, "-thinking")
-	// OpenRouter uses a dotted minor version for the exact Claude 5.5 IDs.
-	// Normalize them before effort, thinking, and billing family lookups.
-	switch id {
-	case "claude-opus-5.5":
+	// OpenRouter uses dotted minor versions for some models. Normalize them
+	// before effort, thinking, and billing family lookups.
+	if id == "claude-opus-5.5" {
 		id = "claude-opus-5-5"
-	case "claude-sonnet-5.5":
+	}
+	if id == "claude-sonnet-5.5" {
 		id = "claude-sonnet-5-5"
 	}
 	if mapped, ok := ModelIDReverseOverrides[id]; ok {
