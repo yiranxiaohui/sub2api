@@ -16,7 +16,8 @@ import (
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
 	isOpus55 := claude.IsOpus55(req.Model)
 	isSonnet55 := claude.IsSonnet55(req.Model)
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, isOpus55 || isSonnet55)
+	isHaiku55 := claude.IsHaiku55(req.Model)
+	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, isOpus55 || isSonnet55 || isHaiku55)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +55,13 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 			return nil, fmt.Errorf("convert tool_choice: %w", err)
 		}
 		out.ToolChoice = tc
+	}
+
+	// Haiku 5.5 has thinking on by default like the other 5.5 models, but it
+	// accepts forced tool_choice and disabled thinking, and rejects any
+	// non-default sampling parameter.
+	if isHaiku55 {
+		return applyHaiku55ResponsesContract(req, out)
 	}
 
 	// The 5.5 models reject manual thinking and forced tool use. Sonnet 5.5
@@ -119,6 +127,38 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 		}
 	}
 
+	return out, nil
+}
+
+// applyHaiku55ResponsesContract maps Responses sampling/reasoning settings onto
+// the Claude Haiku 5.5 request contract.
+func applyHaiku55ResponsesContract(req *ResponsesRequest, out *AnthropicRequest) (*AnthropicRequest, error) {
+	if req.Temperature != nil && *req.Temperature != 1 {
+		return nil, fmt.Errorf("claude-haiku-5-5 does not support non-default temperature")
+	}
+	if req.TopP != nil && *req.TopP != 0.99 {
+		return nil, fmt.Errorf("claude-haiku-5-5 does not support non-default top_p")
+	}
+	if req.Temperature != nil && req.TopP != nil {
+		return nil, fmt.Errorf("claude-haiku-5-5 does not accept temperature and top_p together")
+	}
+	effort := "medium"
+	if req.Reasoning != nil && req.Reasoning.Effort != "" {
+		effort = req.Reasoning.Effort
+	}
+	if effort == "none" {
+		// OpenAI's no-reasoning request maps to disabled thinking, which Haiku
+		// 5.5 accepts at the default (medium) effort.
+		out.Thinking = &AnthropicThinking{Type: "disabled"}
+		return out, nil
+	}
+	switch effort {
+	case "low", "medium", "high", "xhigh", "max":
+	default:
+		return nil, fmt.Errorf("%s does not support reasoning effort %q; use none, low, medium, high, xhigh or max", req.Model, effort)
+	}
+	out.Thinking = &AnthropicThinking{Type: "adaptive"}
+	out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
 	return out, nil
 }
 

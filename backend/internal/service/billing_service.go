@@ -444,6 +444,21 @@ func (s *BillingService) initFallbackPricing() {
 		CacheCreation1hPrice:       4e-6,
 		SupportsCacheBreakdown:     true,
 	}
+	// Claude Haiku 5.5（官方 ≤100k prompt tokens：$0.10/$0.50 per MTok，5m 缓存写 $0.125、
+	// 1h 缓存写 $0.20、缓存读 $0.01；prompt 超过 100k（input+cache）时整单各项 ×5）。
+	// 缺少这条时 getFallbackPricing 会掉到 claude-3-haiku（$0.25/$1.25）。
+	s.fallbackPrices["claude-haiku-5-5"] = &ModelPricing{
+		InputPricePerToken:          0.1e-6,
+		OutputPricePerToken:         0.5e-6,
+		CacheCreationPricePerToken:  0.125e-6,
+		CacheReadPricePerToken:      0.01e-6,
+		CacheCreation5mPrice:        0.125e-6,
+		CacheCreation1hPrice:        0.2e-6,
+		SupportsCacheBreakdown:      true,
+		LongContextInputThreshold:   100000,
+		LongContextInputMultiplier:  5,
+		LongContextOutputMultiplier: 5,
+	}
 	// Claude Fable 5.x uses the same input/output and cache-write prices, while
 	// Fable 5.1 reduces cache reads from $1 to $0.25 per MTok.
 	s.fallbackPrices["claude-fable-5"] = &ModelPricing{
@@ -1016,6 +1031,9 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 	if claude.IsSonnet55(modelLower) {
 		return s.fallbackPrices["claude-sonnet-5-5"]
+	}
+	if claude.IsHaiku55(modelLower) {
+		return s.fallbackPrices["claude-haiku-5-5"]
 	}
 	if strings.Contains(modelLower, "opus") {
 		// "opus-5" 必须先判：不能用裸 "5" 匹配，否则 claude-opus-4-5 会被误判。

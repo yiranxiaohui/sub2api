@@ -127,15 +127,15 @@ func normalizeBedrockModelID(modelID string) (normalized string, shouldAdjustReg
 		return "", false, false
 	}
 	if mapped, exists := domain.DefaultBedrockModelMapping[modelID]; exists {
-		// Sonnet 5.5 currently has only a global inference profile on
-		// bedrock-runtime. A caller's AWS region selects the endpoint, but must
-		// not rewrite the profile ID to a regional one that does not exist.
-		if mapped == "global.anthropic.claude-sonnet-5-5" {
+		// Sonnet 5.5 and Haiku 5.5 are pinned to their global inference
+		// profiles on bedrock-runtime. A caller's AWS region selects the
+		// endpoint, but must not rewrite the profile ID to a regional one.
+		if isBedrockGlobalOnlyModelID(mapped) {
 			return mapped, false, true
 		}
 		return mapped, true, true
 	}
-	if modelID == "global.anthropic.claude-sonnet-5-5" {
+	if isBedrockGlobalOnlyModelID(modelID) {
 		return modelID, false, true
 	}
 	if isRegionalBedrockModelID(modelID) {
@@ -145,6 +145,16 @@ func normalizeBedrockModelID(modelID string) (normalized string, shouldAdjustReg
 		return modelID, false, true
 	}
 	return "", false, false
+}
+
+// isBedrockGlobalOnlyModelID reports Bedrock profile IDs that must keep their
+// global prefix regardless of the account region.
+func isBedrockGlobalOnlyModelID(modelID string) bool {
+	switch modelID {
+	case "global.anthropic.claude-sonnet-5-5", "global.anthropic.claude-haiku-5-5":
+		return true
+	}
+	return false
 }
 
 // ResolveBedrockModelID resolves a requested Claude model into a Bedrock model ID.
@@ -190,7 +200,7 @@ func BuildBedrockURL(region, modelID string, stream bool) string {
 // PrepareBedrockRequestBody 处理请求体以适配 Bedrock API
 //  1. 注入 anthropic_version
 //  2. 注入 anthropic_beta（从客户端 anthropic-beta 头解析）
-//  3. 移除 Bedrock 不支持的字段（model, stream, output_format）；Sonnet 5.5 保留 output_config.effort
+//  3. 移除 Bedrock 不支持的字段（model, stream, output_format）；Sonnet/Haiku 5.5 保留 output_config.effort
 //  4. 移除工具定义中的 custom 字段（Claude Code 会发送 custom: {defer_loading: true}）
 //  5. 清理 cache_control 中 Bedrock 不支持的字段（scope, ttl）
 //  6. 修复 thinking 字段兼容性（Opus 4.7 仅支持 adaptive，enabled 需要 budget_tokens）
@@ -249,10 +259,10 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 	// 参考 litellm: _convert_output_format_to_inline_schema()
 	body = convertOutputFormatToInlineSchema(body)
 
-	// InvokeModel accepts output_config.effort for Sonnet 5.5. Keep just that
-	// field; output_config.format has already been inlined above, and older
-	// models retain the existing output_config stripping behavior.
-	if claude.IsSonnet55(modelID) {
+	// InvokeModel accepts output_config.effort for Sonnet 5.5 and Haiku 5.5.
+	// Keep just that field; output_config.format has already been inlined
+	// above, and older models retain the existing output_config stripping.
+	if claude.IsSonnet55(modelID) || claude.IsHaiku55(modelID) {
 		if effort := gjson.GetBytes(body, "output_config.effort"); effort.Exists() {
 			body, err = sjson.SetRawBytes(body, "output_config", []byte(`{"effort":`+effort.Raw+`}`))
 		} else {
@@ -731,6 +741,7 @@ const defaultThinkingBudgetTokens = 10000
 
 // sanitizeBedrockThinking 修复 thinking 字段的 Bedrock 兼容性问题：
 //   - Sonnet 5.5: enabled 改为 adaptive；disabled 改为 between_tools
+//   - Haiku 5.5: enabled/between_tools 改为 adaptive；disabled 保持不变
 //   - Fable 5: 仅使用 always-on adaptive thinking，不支持手动 budget_tokens
 //   - Opus 4.7+: 仅支持 "adaptive"，将 "enabled" 转换为 "adaptive" 并移除 budget_tokens
 //   - 其他模型: "enabled" 必须带 budget_tokens，缺失时补充默认值
@@ -762,6 +773,16 @@ func sanitizeBedrockThinking(body []byte, modelID string) []byte {
 			body, _ = sjson.DeleteBytes(body, "thinking.budget_tokens")
 		case "disabled":
 			body, _ = sjson.SetBytes(body, "thinking.type", "between_tools")
+		}
+		return body
+	}
+
+	// Haiku 5.5 accepts disabled thinking (at high effort or below) but rejects
+	// manual budgets and between_tools.
+	if claude.IsHaiku55(modelID) {
+		if thinkingType == "enabled" || thinkingType == "between_tools" {
+			body, _ = sjson.SetBytes(body, "thinking.type", "adaptive")
+			body, _ = sjson.DeleteBytes(body, "thinking.budget_tokens")
 		}
 		return body
 	}

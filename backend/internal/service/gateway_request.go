@@ -224,7 +224,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 
 	thinkingType := gjson.Get(jsonStr, "thinking.type").String()
 	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || thinkingType == "between_tools" ||
-		(protocol == domain.PlatformAnthropic && isClaude55SignedThinkingModel(parsed.Model))
+		(protocol == domain.PlatformAnthropic && claude55ThinkingOnByDefault(parsed.Model, thinkingType))
 
 	parsed.OutputEffort = strings.TrimSpace(gjson.Get(jsonStr, "output_config.effort").String())
 	if protocol == domain.PlatformAnthropic {
@@ -570,7 +570,16 @@ func StripEmptyTextBlocks(body []byte) []byte {
 // isClaude55SignedThinkingModel identifies models whose default thinking mode
 // requires signed history to survive protocol conversion and request filtering.
 func isClaude55SignedThinkingModel(model string) bool {
-	return claude.IsOpus55(model) || claude.IsSonnet55(model)
+	return claude.IsOpus55(model) || claude.IsSonnet55(model) || claude.IsHaiku55(model)
+}
+
+// claude55ThinkingOnByDefault reports whether a 5.5 request runs with thinking
+// on. Haiku 5.5 is the only 5.5 model that honors thinking.type=disabled.
+func claude55ThinkingOnByDefault(model, thinkingType string) bool {
+	if !isClaude55SignedThinkingModel(model) {
+		return false
+	}
+	return thinkingType != "disabled" || !claude.IsHaiku55(model)
 }
 
 // validateClaude55Request rejects settings that the upstream cannot honor.
@@ -578,6 +587,9 @@ func isClaude55SignedThinkingModel(model string) bool {
 func validateClaude55Request(body []byte, model string) error {
 	if !isClaude55SignedThinkingModel(model) {
 		return nil
+	}
+	if claude.IsHaiku55(model) {
+		return validateClaudeHaiku55Request(body)
 	}
 	isSonnet55 := claude.IsSonnet55(model)
 	switch gjson.GetBytes(body, "thinking.type").String() {
@@ -625,6 +637,39 @@ func validateClaude55Request(body []byte, model string) error {
 	return nil
 }
 
+// validateClaudeHaiku55Request enforces the Haiku 5.5 request contract. Unlike
+// Opus/Sonnet 5.5 it accepts disabled thinking (at high effort or below) and
+// forced tool_choice, but rejects manual budgets, between_tools and any
+// non-default sampling parameter.
+func validateClaudeHaiku55Request(body []byte) error {
+	switch gjson.GetBytes(body, "thinking.type").String() {
+	case "enabled":
+		return fmt.Errorf("claude-haiku-5-5 does not support manual thinking budgets; omit thinking or use thinking.type=adaptive with output_config.effort")
+	case "between_tools":
+		return fmt.Errorf("claude-haiku-5-5 does not support thinking.type=between_tools; use adaptive or disabled thinking")
+	case "disabled":
+		switch gjson.GetBytes(body, "output_config.effort").String() {
+		case "xhigh", "max":
+			return fmt.Errorf("claude-haiku-5-5 supports thinking.type=disabled only at low, medium or high effort")
+		}
+	}
+	temperature := gjson.GetBytes(body, "temperature")
+	topP := gjson.GetBytes(body, "top_p")
+	if temperature.Exists() && (temperature.Type != gjson.Number || temperature.Float() != 1) {
+		return fmt.Errorf("claude-haiku-5-5 does not support non-default temperature")
+	}
+	if topP.Exists() && (topP.Type != gjson.Number || topP.Float() != 0.99) {
+		return fmt.Errorf("claude-haiku-5-5 does not support non-default top_p")
+	}
+	if temperature.Exists() && topP.Exists() {
+		return fmt.Errorf("claude-haiku-5-5 does not accept temperature and top_p together")
+	}
+	if gjson.GetBytes(body, "top_k").Exists() {
+		return fmt.Errorf("claude-haiku-5-5 does not support top_k")
+	}
+	return nil
+}
+
 // FilterThinkingBlocks removes thinking blocks from request body
 // Returns filtered body or original body if filtering fails (fail-safe)
 // This prevents 400 errors from invalid thinking block signatures.
@@ -643,7 +688,7 @@ func FilterThinkingBlocks(body []byte, mappedModel string) []byte {
 	if !ShouldPreFilterThinkingBlocks(mappedModel) {
 		return body
 	}
-	return filterThinkingBlocksInternal(body, isClaude55SignedThinkingModel(mappedModel))
+	return filterThinkingBlocksInternal(body, claude55ThinkingOnByDefault(mappedModel, gjson.GetBytes(body, "thinking.type").String()))
 }
 
 // FilterThinkingBlocksForRetry strips thinking-related constructs for retry scenarios.
