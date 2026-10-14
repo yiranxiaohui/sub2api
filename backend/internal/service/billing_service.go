@@ -444,9 +444,8 @@ func (s *BillingService) initFallbackPricing() {
 		CacheCreation1hPrice:       4e-6,
 		SupportsCacheBreakdown:     true,
 	}
-	// Claude Haiku 5.5（官方 ≤100k prompt tokens：$0.10/$0.50 per MTok，5m 缓存写 $0.125、
-	// 1h 缓存写 $0.20、缓存读 $0.01；prompt 超过 100k（input+cache）时整单各项 ×5）。
-	// 缺少这条时 getFallbackPricing 会掉到 claude-3-haiku（$0.25/$1.25）。
+	// Claude Haiku 5.5（2026-10-07，$0.10/$0.50，prompt 超 100k tokens 整单 5x）。
+	// 长文本阶梯与目录 *_above_100k_tokens 绝对价同口径，缺目录时回退也不丢阶梯。
 	s.fallbackPrices["claude-haiku-5-5"] = &ModelPricing{
 		InputPricePerToken:          0.1e-6,
 		OutputPricePerToken:         0.5e-6,
@@ -489,14 +488,15 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown:     false,
 	}
 
-	// Gemini 3.6 Flash (Google AI pricing: $1.50 input / $7.50 output /
-	// $0.15 cached input per MTok). Antigravity's -high/-low/-medium/-tiered
-	// aliases are matched below so unavailable remote pricing never records
-	// token-bearing requests at $0.
+	// Gemini 3.6 Flash (Google AI pricing: $0.75 input / $3.75 output /
+	// $0.075 cached input per MTok, promotional through 2026-12-31; official
+	// rates double to $1.50/$7.50/$0.15 from 2027-01-01). Antigravity's
+	// -high/-low/-medium/-tiered aliases are matched below so unavailable
+	// remote pricing never records token-bearing requests at $0.
 	s.fallbackPrices["gemini-3.6-flash"] = &ModelPricing{
-		InputPricePerToken:     1.5e-6,
-		OutputPricePerToken:    7.5e-6,
-		CacheReadPricePerToken: 0.15e-6,
+		InputPricePerToken:     0.75e-6,
+		OutputPricePerToken:    3.75e-6,
+		CacheReadPricePerToken: 0.075e-6,
 		SupportsCacheBreakdown: false,
 	}
 
@@ -1343,6 +1343,18 @@ func (s *BillingService) GetModelPricing(model string) (*ModelPricing, error) {
 	return s.getModelPricingAt(model, timezone.Now())
 }
 
+// CacheStoragePricePerTokenHour 返回模型的显式上下文缓存存储单价（每 token 每小时，USD）。
+// 优先级：价格表（override_file 等）按确定性识别配置的值 > 内置型号价 > 内置 Pro/Flash 系列兜底价；
+// 均未命中返回 0。
+func (s *BillingService) CacheStoragePricePerTokenHour(model string) float64 {
+	if s != nil && s.pricingService != nil {
+		if pricing := s.pricingService.GetIdentifiedModelPricing(model); pricing != nil && pricing.CacheStorageCostPerTokenPerHour > 0 {
+			return pricing.CacheStorageCostPerTokenPerHour
+		}
+	}
+	return builtinGeminiCacheStoragePrice(model)
+}
+
 // getModelPricingAt 是 GetModelPricing 的带计费时点内部变体：pricingAt 显式
 // 驱动 DeepSeek pro→Flash 切换判定（切换点前 Pro 价、之后 Flash 价），使
 // 展示/估算路径可与历史补账同刻复算，测试也能用固定时点钉住断言。
@@ -1494,6 +1506,8 @@ type CostInput struct {
 	Resolver                  *ModelPricingResolver // 定价解析器
 	Resolved                  *ResolvedPricing      // 可选：预解析的定价结果（避免重复 Resolve 调用）
 	LongContextBillingEnabled *bool
+	// DisableModelLongContextPricing 豁免模型价卡的长上下文附加费，不改变自定义区间价格。
+	DisableModelLongContextPricing bool
 }
 
 // CalculateCostUnified 统一计费入口，支持三种计费模式。
@@ -1509,7 +1523,7 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 		if err != nil {
 			return nil, err
 		}
-		breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongContextBilling)
+		breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongContextBilling && !input.DisableModelLongContextPricing)
 		applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers))
 		return breakdown, nil
 	}
@@ -1596,7 +1610,7 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	}
 
 	// 官方长上下文阶梯仅在无区间定价时应用（区间定价已包含上下文分层）。
-	applyLongCtx := len(resolved.Intervals) == 0 && contextTierPricingEnabled
+	applyLongCtx := len(resolved.Intervals) == 0 && contextTierPricingEnabled && !input.DisableModelLongContextPricing
 
 	breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
 	applyCostBreakdownMultiplier(breakdown, resolvedChannelTimeMultiplier(resolved, input.PricingAt))
