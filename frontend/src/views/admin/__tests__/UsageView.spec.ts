@@ -67,7 +67,7 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/api/admin/usage', () => ({
   adminUsageAPI: {
-		list: exportList,
+		exportBatch: exportList,
   },
 }))
 
@@ -756,7 +756,7 @@ describe('admin UsageView model audit export', () => {
 				duration_ms: 10,
 			}],
 			total: 1,
-			pages: 1,
+			next_cursor: '',
 		})
 		getStats.mockReset().mockResolvedValue({
 			total_requests: 0, total_input_tokens: 0, total_output_tokens: 0,
@@ -799,4 +799,68 @@ describe('admin UsageView model audit export', () => {
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		expect(saveAs).toHaveBeenCalledTimes(1)
 	})
+
+  it('uses large cursor batches, counts once, and freezes filters throughout the export', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.filters.user_id = 7
+    const startDate = vm.filters.start_date
+    const endDate = vm.filters.end_date
+    const item = { created_at: '2026-10-20T00:00:00Z', model: 'a-model' }
+    // A changing total must not truncate the export: next_cursor controls completion.
+    exportList.mockReset()
+      .mockImplementationOnce(() => {
+        vm.filters.user_id = 99
+        vm.filters.start_date = '2026-01-01'
+        return Promise.resolve({ items: [item], total: 1, next_cursor: 'cursor-1' })
+      })
+      .mockResolvedValueOnce({ items: [item], total: 0, next_cursor: 'cursor-2' })
+      .mockResolvedValueOnce({ items: [item], total: 0, next_cursor: '' })
+
+    await vm.exportToExcel()
+
+    expect(exportList).toHaveBeenCalledTimes(3)
+    for (let i = 0; i < 3; i++) {
+      expect(exportList.mock.calls[i][0]).toEqual(expect.objectContaining({
+        page: 1, page_size: 1000, user_id: 7, start_date: startDate, end_date: endDate,
+        exact_total: i === 0,
+        export_cursor: [undefined, 'cursor-1', 'cursor-2'][i],
+      }))
+    }
+    expect(sheetAddAoa).toHaveBeenCalledTimes(3)
+    expect(saveAs).toHaveBeenCalledWith(expect.any(Blob), `usage_${startDate}_to_${endDate}.xlsx`)
+    expect(vm.exportProgress).toEqual(expect.objectContaining({ current: 3, total: 3, progress: 100, show: false }))
+    wrapper.unmount()
+  })
+
+  it('aborts the active batch without downloading a partial workbook and resets progress on retry', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    let rejectBatch!: (reason: Error) => void
+    let batchSignal!: AbortSignal
+    exportList.mockImplementationOnce((_params, { signal }) => {
+      batchSignal = signal
+      signal.addEventListener('abort', () => rejectBatch(new Error('canceled')))
+      return new Promise((_resolve, reject) => { rejectBatch = reject })
+    })
+
+    const pending = vm.exportToExcel()
+    await flushPromises()
+    vm.cancelExport()
+    await pending
+
+    expect(batchSignal.aborted).toBe(true)
+    expect(saveAs).not.toHaveBeenCalled()
+    expect(vm.exporting).toBe(false)
+    Object.assign(vm.exportProgress, { current: 500, total: 1000, progress: 50 })
+    exportList.mockImplementationOnce(() => {
+      expect(vm.exportProgress).toEqual(expect.objectContaining({ current: 0, total: 0, progress: 0 }))
+      return Promise.resolve({ items: [], total: 0, next_cursor: '' })
+    })
+    await vm.exportToExcel()
+    expect(saveAs).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
 })

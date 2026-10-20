@@ -287,6 +287,9 @@ type UsageLogFilters struct {
 	EndTime               *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
+	// Export uses bounded cursor pagination, counting only the first batch.
+	Export       bool
+	ExportCursor *UsageLogExportCursor
 }
 
 // UsageStats represents usage statistics

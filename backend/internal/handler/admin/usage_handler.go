@@ -188,6 +188,31 @@ func (h *UsageHandler) List(c *gin.Context) {
 		SortBy:    c.DefaultQuery("sort_by", "created_at"),
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
 	}
+	export := false
+	if raw := strings.TrimSpace(c.Query("export")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "Invalid export value, use true or false")
+			return
+		}
+		export = value
+	}
+	var exportCursor *usagestats.UsageLogExportCursor
+	if raw := c.Query("export_cursor"); raw != "" {
+		if !export {
+			response.BadRequest(c, "export_cursor requires export=true")
+			return
+		}
+		var err error
+		exportCursor, err = usagestats.ParseUsageLogExportCursor(raw, params)
+		if err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+	if export {
+		params.Page = 1
+	}
 	filters := usagestats.UsageLogFilters{
 		UserID:                userID,
 		APIKeyID:              apiKeyID,
@@ -205,6 +230,8 @@ func (h *UsageHandler) List(c *gin.Context) {
 		StartTime:             startTime,
 		EndTime:               endTime,
 		ExactTotal:            exactTotal,
+		Export:                export,
+		ExportCursor:          exportCursor,
 	}
 
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
@@ -216,6 +243,12 @@ func (h *UsageHandler) List(c *gin.Context) {
 	out := make([]dto.AdminUsageLog, 0, len(records))
 	for i := range records {
 		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
+	}
+	if export {
+		response.Success(c, gin.H{
+			"items": out, "total": result.Total, "next_cursor": result.NextCursor,
+		})
+		return
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
 }

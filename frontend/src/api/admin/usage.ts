@@ -93,6 +93,12 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   status_code?: number | null
 }
 
+export interface UsageExportBatch {
+  items: AdminUsageLog[]
+  total: number
+  next_cursor: string
+}
+
 // ==================== API Functions ====================
 
 /**
@@ -106,6 +112,18 @@ export async function list(
 ): Promise<PaginatedResponse<AdminUsageLog>> {
   const { data } = await apiClient.get<PaginatedResponse<AdminUsageLog>>('/admin/usage', {
     params,
+    signal: options?.signal
+  })
+  return data
+}
+
+/** Export in bounded batches. Only the first batch includes an exact total. */
+export async function exportBatch(
+  params: AdminUsageQueryParams & { export_cursor?: string },
+  options?: { signal?: AbortSignal }
+): Promise<UsageExportBatch> {
+  const { data } = await apiClient.get<UsageExportBatch>('/admin/usage', {
+    params: { ...params, export: true },
     signal: options?.signal
   })
   return data
@@ -209,6 +227,7 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 
 export const adminUsageAPI = {
   list,
+  exportBatch,
   getStats,
   searchUsers,
   searchApiKeys,

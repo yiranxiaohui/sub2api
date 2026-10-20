@@ -146,7 +146,9 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		page *pagination.PaginationResult
 		err  error
 	)
-	if shouldUseFastUsageLogTotal(filters) {
+	if filters.Export {
+		logs, page, err = r.listUsageLogsForExport(ctx, conditions, args, params, filters.ExportCursor)
+	} else if shouldUseFastUsageLogTotal(filters) {
 		logs, page, err = r.listUsageLogsWithFastPagination(ctx, whereClause, args, params)
 	} else {
 		logs, page, err = r.listUsageLogsWithPagination(ctx, whereClause, args, params)
@@ -224,7 +226,7 @@ func (r *usageLogRepository) listUsageLogsWithFastPagination(ctx context.Context
 }
 
 func usageLogOrderBy(params pagination.PaginationParams) string {
-	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
+	sortBy := usagestats.NormalizeUsageLogSortBy(params.SortBy)
 	sortOrder := strings.ToUpper(params.NormalizedSortOrder(pagination.SortOrderDesc))
 
 	var column string

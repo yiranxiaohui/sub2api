@@ -22,6 +22,8 @@ type PaginationResult struct {
 	Page     int
 	PageSize int
 	Pages    int
+	// NextCursor is set by endpoints that support cursor pagination.
+	NextCursor string
 }
 
 // DefaultPagination 默认分页参数

@@ -575,8 +575,11 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
 const exportToExcel = async () => {
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
   const c = new AbortController(); exportAbortController = c
+  Object.assign(exportProgress, { progress: 0, current: 0, total: 0, estimatedTime: '' })
+  // Keep filters, ordering, and filename fixed for the entire export.
+  const exportParams = buildUsageListParams(1, 1000, true)
   try {
-    let p = 1; let total = pagination.total; let exportedCount = 0
+    let cursor: string | undefined; let total = 0; let exportedCount = 0
     const XLSX = await import('xlsx')
     const headers = [
       t('usage.time'), t('admin.usage.user'), t('usage.apiKeyFilter'),
@@ -592,12 +595,13 @@ const exportToExcel = async () => {
       t('admin.usage.requestId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
-    while (true) {
-      const res = await adminUsageAPI.list(
-        buildUsageListParams(p, 100, true),
+    while (!c.signal.aborted) {
+      const res = await adminUsageAPI.exportBatch(
+        { ...exportParams, exact_total: !cursor, export_cursor: cursor },
         { signal: c.signal }
       )
-      if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
+      if (c.signal.aborted) break
+      if (!cursor) { total = res.total; exportProgress.total = total }
       const rows = (res.items || []).map((log: AdminUsageLog) => [
         log.created_at, log.user?.email || '', log.api_key?.name || '', log.account?.name || '', log.model,
         log.upstream_model || log.model, log.upstream_response_model || '', log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.reasoning_effort), formatReasoningEffort(log.upstream_reasoning_effort || log.reasoning_effort), log.group?.name || '',
@@ -616,15 +620,21 @@ const exportToExcel = async () => {
       exportedCount += rows.length
       exportProgress.current = exportedCount
       exportProgress.progress = total > 0 ? Math.min(100, Math.round(exportedCount / total * 100)) : 0
-      if (exportedCount >= total || res.items.length < 100) break; p++
+      // The cursor determines completion even if records were deleted during export.
+      if (!res.next_cursor) {
+        exportProgress.total = exportedCount
+        exportProgress.progress = 100
+        break
+      }
+      cursor = res.next_cursor
     }
     if(!c.signal.aborted) {
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Usage')
-      saveAs(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `usage_${filters.value.start_date}_to_${filters.value.end_date}.xlsx`)
+      saveAs(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `usage_${exportParams.start_date}_to_${exportParams.end_date}.xlsx`)
       appStore.showSuccess(t('usage.exportSuccess'))
     }
-  } catch (error) { console.error('Failed to export:', error); appStore.showError('Export Failed') }
+  } catch (error) { if (!c.signal.aborted) { console.error('Failed to export:', error); appStore.showError('Export Failed') } }
   finally { if(exportAbortController === c) { exportAbortController = null; exporting.value = false; exportProgress.show = false } }
 }
 
