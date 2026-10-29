@@ -57,6 +57,18 @@ func IsHaiku55(model string) bool {
 	return normalizeEffortModelID(model) == "claude-haiku-5-5"
 }
 
+// IsFable5 identifies Claude Fable 5 and its point releases (for example 5.1)
+// after provider/local suffix normalization.
+func IsFable5(model string) bool {
+	id := normalizeEffortModelID(model)
+	return id == "claude-fable-5" || strings.HasPrefix(id, "claude-fable-5-") || strings.HasPrefix(id, "claude-fable-5.")
+}
+
+// IsOpus5 identifies the fixed Opus 5 ID; Opus 5.5 is matched by IsOpus55.
+func IsOpus5(model string) bool {
+	return normalizeEffortModelID(model) == "claude-opus-5"
+}
+
 func normalizeEffortModelID(model string) string {
 	id := strings.ToLower(strings.TrimSpace(model))
 	id = strings.TrimPrefix(id, "models/")

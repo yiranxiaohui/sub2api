@@ -11,7 +11,10 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // IsRegistrationEnabled 检查是否开放注册
@@ -888,7 +891,65 @@ func (s *SettingService) SetRectifierSettings(ctx context.Context, settings *Rec
 		return fmt.Errorf("marshal rectifier settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyRectifierSettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyRectifierSettings, string(data)); err != nil {
+		return err
+	}
+	// 立即刷新本进程的透传开关缓存，避免保存后最长 60s 才生效
+	thinkingBlockPassthroughSF.Forget("thinking_block_passthrough")
+	thinkingBlockPassthroughCache.Store(&cachedThinkingBlockPassthrough{
+		value:     settings.ThinkingBlockPassthrough,
+		expiresAt: time.Now().Add(thinkingBlockPassthroughCacheTTL).UnixNano(),
+	})
+	return nil
+}
+
+// cachedThinkingBlockPassthrough 缓存 thinking 块透传开关（进程内缓存，60s TTL）。
+// 该开关在每个 Anthropic 请求的转发热路径上读取，不能每次查库。
+type cachedThinkingBlockPassthrough struct {
+	value     bool
+	expiresAt int64 // unix nano
+}
+
+var thinkingBlockPassthroughCache atomic.Value // *cachedThinkingBlockPassthrough
+var thinkingBlockPassthroughSF singleflight.Group
+
+const thinkingBlockPassthroughCacheTTL = 60 * time.Second
+const thinkingBlockPassthroughErrorTTL = 5 * time.Second
+const thinkingBlockPassthroughDBTimeout = 5 * time.Second
+
+// IsThinkingBlockPassthroughEnabled 判断是否跳过 thinking 块预过滤、原样转发给上游校验。
+// 默认关闭；查询失败时保持预过滤（与历史行为一致）。
+func (s *SettingService) IsThinkingBlockPassthroughEnabled(ctx context.Context) bool {
+	if cached, ok := thinkingBlockPassthroughCache.Load().(*cachedThinkingBlockPassthrough); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.value
+		}
+	}
+	result, _, _ := thinkingBlockPassthroughSF.Do("thinking_block_passthrough", func() (any, error) {
+		if cached, ok := thinkingBlockPassthroughCache.Load().(*cachedThinkingBlockPassthrough); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.value, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), thinkingBlockPassthroughDBTimeout)
+		defer cancel()
+		settings, err := s.GetRectifierSettings(dbCtx)
+		if err != nil {
+			slog.Warn("failed to get rectifier settings for thinking block passthrough", "error", err)
+			thinkingBlockPassthroughCache.Store(&cachedThinkingBlockPassthrough{
+				value:     false,
+				expiresAt: time.Now().Add(thinkingBlockPassthroughErrorTTL).UnixNano(),
+			})
+			return false, nil
+		}
+		thinkingBlockPassthroughCache.Store(&cachedThinkingBlockPassthrough{
+			value:     settings.ThinkingBlockPassthrough,
+			expiresAt: time.Now().Add(thinkingBlockPassthroughCacheTTL).UnixNano(),
+		})
+		return settings.ThinkingBlockPassthrough, nil
+	})
+	enabled, _ := result.(bool)
+	return enabled
 }
 
 // IsSignatureRectifierEnabled 判断签名整流是否启用（总开关 && 签名子开关）

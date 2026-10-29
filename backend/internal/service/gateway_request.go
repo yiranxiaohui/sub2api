@@ -224,7 +224,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 
 	thinkingType := gjson.Get(jsonStr, "thinking.type").String()
 	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || thinkingType == "between_tools" ||
-		(protocol == domain.PlatformAnthropic && claude55ThinkingOnByDefault(parsed.Model, thinkingType))
+		(protocol == domain.PlatformAnthropic && claudeThinkingOnByDefault(parsed.Model, thinkingType))
 
 	parsed.OutputEffort = strings.TrimSpace(gjson.Get(jsonStr, "output_config.effort").String())
 	if protocol == domain.PlatformAnthropic {
@@ -583,6 +583,21 @@ func claude55ThinkingOnByDefault(model, thinkingType string) bool {
 	return thinkingType != "disabled" || !claude.IsHaiku55(model)
 }
 
+// claudeThinkingOnByDefault reports whether a Claude request runs with thinking
+// on when the client omits an explicit thinking mode. Beyond the 5.5 family,
+// Fable 5 (including 5.1) always thinks adaptively and Opus 5 defaults to
+// adaptive thinking, so their history carries signed thinking blocks that the
+// pre-filter must keep even without a top-level thinking field.
+func claudeThinkingOnByDefault(model, thinkingType string) bool {
+	if claude.IsFable5(model) {
+		return true
+	}
+	if claude.IsOpus5(model) {
+		return thinkingType != "disabled"
+	}
+	return claude55ThinkingOnByDefault(model, thinkingType)
+}
+
 // validateClaude55Request rejects settings that the upstream cannot honor.
 // Call before OAuth mimicry can remove tool_choice or alter thinking defaults.
 func validateClaude55Request(body []byte, model string) error {
@@ -675,14 +690,19 @@ func validateClaude55Request(body []byte, model string) error {
 // .pensieve/short-term/knowledge/thinking-block-filter-third-party-upstream-inversion/。
 //
 // 策略 (anthropic-strict only)：
-//   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
-//   - 当 thinking.type 是 "enabled"/"adaptive"：移除缺失/无效 signature 的 thinking 块（避免 400）
+//   - 当 thinking 未开启（thinking.type 不是 "enabled"/"adaptive"，且模型不是默认开启
+//     thinking 的 5.5 / Fable 5 / Opus 5）：移除所有 thinking 相关块
+//   - 当 thinking 开启：移除缺失/无效 signature 的 thinking 块与无 data 的
+//     redacted_thinking 块（避免 400），有效块原样保留
 //   - 对要求签名历史完整的 5.5 模型，一旦有无效块，移除历史中的全部 thinking 块
 func FilterThinkingBlocks(body []byte, mappedModel string) []byte {
 	if !ShouldPreFilterThinkingBlocks(mappedModel) {
 		return body
 	}
-	return filterThinkingBlocksInternal(body, claude55ThinkingOnByDefault(mappedModel, gjson.GetBytes(body, "thinking.type").String()))
+	thinkingType := gjson.GetBytes(body, "thinking.type").String()
+	return filterThinkingBlocksInternal(body,
+		claudeThinkingOnByDefault(mappedModel, thinkingType),
+		claude55ThinkingOnByDefault(mappedModel, thinkingType))
 }
 
 // FilterThinkingBlocksForRetry strips thinking-related constructs for retry scenarios.
@@ -1422,11 +1442,13 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte, mappedModel string) []b
 
 // filterThinkingBlocksInternal removes invalid thinking blocks from request
 // 策略：
-//   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
-//   - 当 thinking.type 是 "enabled"/"adaptive"：移除缺失/无效 signature 的 thinking 块
-//   - 对 5.5 模型，只要历史中有无效 thinking，就移除所有 thinking/redacted_thinking，
-//     避免留下不连续的签名历史
-func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
+//   - 当 thinking 未开启（thinking.type 不是 "enabled"/"adaptive" 且 thinkingOnByDefault
+//     为 false）：移除所有 thinking 相关块
+//   - 当 thinking 开启：移除缺失/无效 signature 的 thinking 块与无 data 的
+//     redacted_thinking 块
+//   - dropChainOnInvalid（5.5 模型）：只要历史中有无效 thinking，就移除所有
+//     thinking/redacted_thinking，避免留下不连续的签名历史
+func filterThinkingBlocksInternal(body []byte, thinkingOnByDefault, dropChainOnInvalid bool) []byte {
 	// Fast path: if body doesn't contain "thinking", skip parsing
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
@@ -1443,7 +1465,7 @@ func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 	}
 
 	// Check if thinking is enabled
-	thinkingEnabled := alwaysThinking
+	thinkingEnabled := thinkingOnByDefault
 	if thinking, ok := req["thinking"].(map[string]any); ok {
 		if thinkType, ok := thinking["type"].(string); ok && (thinkType == "enabled" || thinkType == "adaptive") {
 			thinkingEnabled = true
@@ -1484,16 +1506,18 @@ func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 				// When thinking is enabled and this is an assistant message,
 				// only keep thinking blocks with valid signatures
 				if thinkingEnabled && role == "assistant" {
-					if alwaysThinking && blockType == "redacted_thinking" {
+					// redacted_thinking 只携带加密 data、没有 signature 字段，按 data 判断有效性。
+					if blockType == "redacted_thinking" {
 						if data, ok := blockMap["data"].(string); ok && data != "" {
 							newContent = append(newContent, block)
 							continue
 						}
-					}
-					signature, _ := blockMap["signature"].(string)
-					if signature != "" && signature != antigravity.DummyThoughtSignature {
-						newContent = append(newContent, block)
-						continue
+					} else {
+						signature, _ := blockMap["signature"].(string)
+						if signature != "" && signature != antigravity.DummyThoughtSignature {
+							newContent = append(newContent, block)
+							continue
+						}
 					}
 				}
 				filtered = true
@@ -1521,7 +1545,7 @@ func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 	if !filtered {
 		return body
 	}
-	if alwaysThinking {
+	if dropChainOnInvalid {
 		for _, msg := range messages {
 			msgMap, ok := msg.(map[string]any)
 			if !ok {

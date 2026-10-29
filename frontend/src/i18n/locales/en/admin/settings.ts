@@ -1114,6 +1114,9 @@ export default {
           'Additional keywords matched against the response body (case-insensitive). Built-in patterns always apply; use these for supplementary matching.',
         apikeyPatternPlaceholder: 'e.g., thinking_error',
         addPattern: 'Add Pattern',
+        thinkingBlockPassthrough: 'Thinking Block Passthrough',
+        thinkingBlockPassthroughHint:
+          'Skip the pre-forward thinking block filter and send historical thinking blocks to upstream unchanged; upstream rejects missing or invalid signatures with 400. Independent of the master switch. To fully match the official API, also disable the signature rectifiers above.',
         saved: 'Rectifier settings saved',
         saveFailed: 'Failed to save rectifier settings'
       },

@@ -752,6 +752,26 @@
                   </div>
                 </div>
 
+                <!-- Thinking Block Passthrough (independent of master toggle) -->
+                <div
+                  class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
+                >
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >{{
+                        t("admin.settings.rectifier.thinkingBlockPassthrough")
+                      }}</label
+                    >
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t("admin.settings.rectifier.thinkingBlockPassthroughHint")
+                      }}
+                    </p>
+                  </div>
+                  <Toggle v-model="rectifierForm.thinking_block_passthrough" />
+                </div>
+
                 <!-- Save Button -->
                 <div
                   class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700"
@@ -9256,6 +9276,7 @@ const rectifierForm = reactive({
   thinking_budget_enabled: true,
   apikey_signature_enabled: false,
   apikey_signature_patterns: [] as string[],
+  thinking_block_passthrough: false,
 });
 
 // Beta Policy 状态
@@ -12342,6 +12363,7 @@ async function saveRectifierSettings() {
       apikey_signature_patterns: rectifierForm.apikey_signature_patterns.filter(
         (p) => p.trim() !== "",
       ),
+      thinking_block_passthrough: rectifierForm.thinking_block_passthrough,
     });
     Object.assign(rectifierForm, updated);
     if (!Array.isArray(rectifierForm.apikey_signature_patterns)) {

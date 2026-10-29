@@ -1108,6 +1108,9 @@ export default {
           '额外的关键词，匹配响应体中的内容（不区分大小写）。内置规则始终生效，此处用于补充额外匹配。',
         apikeyPatternPlaceholder: '例如：thinking_error 或 签名无效',
         addPattern: '添加关键词',
+        thinkingBlockPassthrough: 'Thinking 块原样透传',
+        thinkingBlockPassthroughHint:
+          '跳过转发前的 thinking 块预过滤，历史 thinking 块原样发给上游，缺失或无效签名由上游直接返回 400。不受总开关控制；如需与官方行为完全一致，请同时关闭上方的签名整流。',
         saved: '整流器设置保存成功',
         saveFailed: '保存整流器设置失败'
       },

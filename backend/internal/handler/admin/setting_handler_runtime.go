@@ -282,6 +282,7 @@ func (h *SettingHandler) GetRectifierSettings(c *gin.Context) {
 		ThinkingBudgetEnabled:    settings.ThinkingBudgetEnabled,
 		APIKeySignatureEnabled:   settings.APIKeySignatureEnabled,
 		APIKeySignaturePatterns:  patterns,
+		ThinkingBlockPassthrough: settings.ThinkingBlockPassthrough,
 	})
 }
 
@@ -292,6 +293,7 @@ type UpdateRectifierSettingsRequest struct {
 	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`
 	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`
 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
+	ThinkingBlockPassthrough bool     `json:"thinking_block_passthrough"`
 }
 
 // UpdateRectifierSettings 更新请求整流器配置
@@ -329,6 +331,7 @@ func (h *SettingHandler) UpdateRectifierSettings(c *gin.Context) {
 		ThinkingBudgetEnabled:    req.ThinkingBudgetEnabled,
 		APIKeySignatureEnabled:   req.APIKeySignatureEnabled,
 		APIKeySignaturePatterns:  cleanedPatterns,
+		ThinkingBlockPassthrough: req.ThinkingBlockPassthrough,
 	}
 
 	if err := h.settingService.SetRectifierSettings(c.Request.Context(), settings); err != nil {
@@ -353,6 +356,7 @@ func (h *SettingHandler) UpdateRectifierSettings(c *gin.Context) {
 		ThinkingBudgetEnabled:    updatedSettings.ThinkingBudgetEnabled,
 		APIKeySignatureEnabled:   updatedSettings.APIKeySignatureEnabled,
 		APIKeySignaturePatterns:  updatedPatterns,
+		ThinkingBlockPassthrough: updatedSettings.ThinkingBlockPassthrough,
 	})
 }
 

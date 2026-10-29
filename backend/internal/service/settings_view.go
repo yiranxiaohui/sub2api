@@ -527,6 +527,9 @@ type RectifierSettings struct {
 	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`    // Thinking Budget 整流
 	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`   // API Key 签名整流开关
 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`  // API Key 自定义匹配关键词
+	// ThinkingBlockPassthrough 跳过转发前的 thinking 块预过滤，原样交给上游校验。
+	// 独立于总开关；用反向语义保证旧配置（缺字段）读出 false，维持预过滤。
+	ThinkingBlockPassthrough bool `json:"thinking_block_passthrough"`
 }
 
 // DefaultRectifierSettings 返回默认的整流器配置（全部启用）
