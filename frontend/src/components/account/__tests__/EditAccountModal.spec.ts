@@ -336,6 +336,35 @@ describe('EditAccountModal', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('lets Anthropic OAuth and setup-token accounts restrict models', async () => {
+    for (const type of ['oauth', 'setup-token']) {
+      const account = {
+        ...buildAccount(),
+        id: 8,
+        name: `Claude ${type}`,
+        platform: 'anthropic',
+        type,
+        credentials: {
+          access_token: 'claude-token',
+          model_mapping: { 'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-5': 'claude-sonnet-4-6' }
+        },
+        extra: {}
+      } as any
+      updateAccountMock.mockReset().mockResolvedValue(account)
+      checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+      const wrapper = mountModal(account)
+      const selector = wrapper.getComponent(ModelWhitelistSelectorStub)
+      expect(selector.props('modelValue')).toEqual(['claude-opus-4-7'])
+      expect(selector.props('modelMappings')).toEqual([{ from: 'claude-opus-5', to: 'claude-sonnet-4-6' }])
+
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+      const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+      expect(credentials?.model_mapping).toEqual(account.credentials.model_mapping)
+      expect(credentials?.access_token).toBe('claude-token')
+      wrapper.unmount()
+    }
+  })
+
   it('passes existing non-identity mappings to the whitelist selector and preserves them on save', async () => {
     const account = buildAccount()
     account.credentials.model_mapping = { 'gpt-5.2': 'gpt-5.2', 'gpt-latest': 'deepseek-chat' }

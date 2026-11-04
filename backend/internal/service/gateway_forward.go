@@ -102,6 +102,8 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			}
 		} else if account.Type == AccountTypeAPIKey {
 			validationModel = account.GetMappedModel(validationModel)
+		} else if mapped, ok := resolveAnthropicOAuthAccountMappedModel(account, validationModel); ok {
+			validationModel = mapped
 		}
 	}
 	if account != nil && account.Platform == PlatformAnthropic {
@@ -290,6 +292,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if account.Type == AccountTypeAPIKey {
 		mappedModel = account.GetMappedModel(reqModel)
 		if mappedModel != reqModel {
+			mappingSource = "account"
+		}
+	}
+	if mappingSource == "" {
+		if candidate, ok := resolveAnthropicOAuthAccountMappedModel(account, reqModel); ok {
+			mappedModel = candidate
 			mappingSource = "account"
 		}
 	}
@@ -1039,6 +1047,29 @@ func resolveAccountUpstreamModel(account *Account, requestedModel string) string
 		return mapAntigravityModel(account, requestedModel)
 	}
 	return account.GetMappedModel(requestedModel)
+}
+
+// resolveAnthropicOAuthAccountMappedModel 对 Anthropic OAuth/SetupToken 账号应用账号级
+// model_mapping（模型白名单以恒等映射保存）。仅当映射把模型改写为另一个模型时返回 true，
+// 结果已按 Claude OAuth 规则标准化；未命中或恒等映射时由调用方继续走短 ID → 长 ID 标准化。
+func resolveAnthropicOAuthAccountMappedModel(account *Account, requestedModel string) (string, bool) {
+	if account == nil || !account.IsAnthropicOAuthOrSetupToken() || strings.TrimSpace(requestedModel) == "" {
+		return requestedModel, false
+	}
+	candidate, matched := account.ResolveMappedModel(requestedModel)
+	if !matched {
+		if normalized := claude.NormalizeModelID(requestedModel); normalized != requestedModel {
+			candidate, matched = account.ResolveMappedModel(normalized)
+		}
+	}
+	if !matched || strings.TrimSpace(candidate) == "" {
+		return requestedModel, false
+	}
+	mapped := claude.NormalizeModelID(candidate)
+	if mapped == requestedModel || mapped == claude.NormalizeModelID(requestedModel) {
+		return requestedModel, false
+	}
+	return mapped, true
 }
 
 // needsUpstreamChannelRestrictionCheck 判断是否需要在调度循环中逐账号检查上游模型的渠道限制。

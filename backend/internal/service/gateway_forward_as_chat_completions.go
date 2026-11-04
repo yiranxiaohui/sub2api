@@ -53,6 +53,8 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	mappedModel := originalModel
 	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
 		mappedModel = account.GetMappedModel(originalModel)
+	} else if candidate, ok := resolveAnthropicOAuthAccountMappedModel(account, originalModel); ok {
+		mappedModel = candidate
 	}
 	if mappedModel == originalModel && account.Platform == PlatformAnthropic && account.Type == AccountTypeServiceAccount {
 		normalized := normalizeVertexAnthropicModelID(claude.NormalizeModelID(originalModel))

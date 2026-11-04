@@ -38,6 +38,8 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 			}
 		} else if account.Type == AccountTypeAPIKey {
 			validationModel = account.GetMappedModel(validationModel)
+		} else if mapped, ok := resolveAnthropicOAuthAccountMappedModel(account, validationModel); ok {
+			validationModel = mapped
 		}
 	}
 	if account != nil && account.Platform == PlatformAnthropic {
@@ -121,6 +123,12 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		if account.Type == AccountTypeAPIKey {
 			mappedModel = account.GetMappedModel(reqModel)
 			if mappedModel != reqModel {
+				mappingSource = "account"
+			}
+		}
+		if mappingSource == "" {
+			if candidate, ok := resolveAnthropicOAuthAccountMappedModel(account, reqModel); ok {
+				mappedModel = candidate
 				mappingSource = "account"
 			}
 		}

@@ -2484,9 +2484,9 @@
         </div>
       </div>
 
-      <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <!-- OpenAI/Grok/Anthropic OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
       <div
-        v-if="(form.platform === 'openai' || form.platform === 'grok') && isOAuthFlow"
+        v-if="((form.platform === 'openai' || form.platform === 'grok') && isOAuthFlow) || isAnthropicOAuthCreate"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -4117,7 +4117,6 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
 import {
-  claudeModels,
   getPresetMappingsByPlatform,
   getModelsByPlatform,
   commonErrorCodes,
@@ -4944,6 +4943,25 @@ const openAIWSModeHintKey = computed(() =>
   resolveOpenAIWSModeHintKey(openaiResponsesWebSocketV2Mode.value)
 )
 
+// Anthropic OAuth/SetupToken 默认不限制模型（空白名单 = 支持所有模型），
+// 避免预填当前模型列表后新发布的 Claude 模型被排除在外。
+const isAnthropicOAuthCreate = computed(
+  () => form.platform === 'anthropic' && accountCategory.value === 'oauth-based'
+)
+const defaultWhitelistModels = (): string[] =>
+  isAnthropicOAuthCreate.value ? [] : [...getModelsByPlatform(form.platform)]
+const applyAnthropicOAuthModelMapping = (credentials: Record<string, unknown>) => {
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
+  if (modelMapping) {
+    credentials.model_mapping = modelMapping
+  } else {
+    delete credentials.model_mapping
+  }
+}
 const isOpenAIModelRestrictionDisabled = computed(() =>
   form.platform === 'openai' && openaiPassthroughEnabled.value
 )
@@ -5086,7 +5104,7 @@ watch(
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = defaultWhitelistModels()
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -5283,10 +5301,17 @@ watch(
   [modelRestrictionMode, () => form.platform],
   ([newMode]) => {
     if (newMode === 'whitelist') {
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = defaultWhitelistModels()
     }
   }
 )
+
+// Anthropic 在 OAuth 与 API Key/Bedrock 等类别间切换时，重新套用对应的默认白名单
+watch(isAnthropicOAuthCreate, () => {
+  if (modelRestrictionMode.value === 'whitelist') {
+    allowedModels.value = defaultWhitelistModels()
+  }
+})
 
 watch(
   [antigravityModelRestrictionMode, () => form.platform],
@@ -5644,7 +5669,7 @@ const resetForm = () => {
   modelMappings.value = []
   openAICompactModelMappings.value = []
   modelRestrictionMode.value = 'whitelist'
-  allowedModels.value = [...claudeModels] // Default fill related models
+  allowedModels.value = defaultWhitelistModels() // Default fill related models
 
   antigravityModelRestrictionMode.value = 'mapping'
   antigravityWhitelistModels.value = []
@@ -7308,6 +7333,7 @@ const handleAnthropicExchange = async (authCode: string) => {
 
     const credentials: Record<string, unknown> = { ...tokenInfo }
     applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
+    applyAnthropicOAuthModelMapping(credentials)
     await createAccountAndFinish(form.platform, addMethod.value as AccountType, credentials, extra)
   } catch (error: any) {
     oauth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
@@ -7435,6 +7461,7 @@ const handleCookieAuth = async (sessionKey: string) => {
 
         const credentials: Record<string, unknown> = { ...tokenInfo }
         applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
+        applyAnthropicOAuthModelMapping(credentials)
         if (tempUnschedEnabled.value) {
           credentials.temp_unschedulable_enabled = true
           credentials.temp_unschedulable_rules = tempUnschedPayload
