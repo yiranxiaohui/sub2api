@@ -240,10 +240,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
-	out := make([]dto.AdminUsageLog, 0, len(records))
-	for i := range records {
-		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
-	}
+	out := adminUsageLogResponses(c, records)
 	if export {
 		response.Success(c, gin.H{
 			"items": out, "total": result.Total, "next_cursor": result.NextCursor,
