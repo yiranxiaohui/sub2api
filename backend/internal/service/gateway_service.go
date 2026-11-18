@@ -507,6 +507,11 @@ var allowedHeaders = map[string]bool{
 	"accept-encoding":                           true,
 	"x-claude-code-session-id":                  true,
 	"x-client-request-id":                       true,
+	// Optional CLI correlation/classification fields: forward only when supplied.
+	"x-claude-1p-request-class":   true,
+	"x-claude-code-request-class": true,
+	"x-claude-code-prompt-id":     true,
+	"x-claude-code-sandy-plover":  true,
 }
 
 // ErrStickySessionNotFound is returned by GatewayCache.GetSessionAccountID

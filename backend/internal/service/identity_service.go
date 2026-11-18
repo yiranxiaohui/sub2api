@@ -121,14 +121,15 @@ func floorClaudeCLIUserAgentVersion(ua string) (string, bool) {
 // UserAgent 不能在包 init 时固化：必须在每次使用时经 EffectiveCLIVersion 现取，
 // 否则运行期同步到新版本后，新建账号会写入过期版本作为持久身份。
 func defaultFingerprint() Fingerprint {
+	profile := claude.DefaultClientProfile()
 	return Fingerprint{
 		UserAgent:               claude.DefaultUserAgent(),
-		StainlessLang:           "js",
-		StainlessPackageVersion: "0.94.0",
-		StainlessOS:             "Linux",
-		StainlessArch:           "arm64",
-		StainlessRuntime:        "node",
-		StainlessRuntimeVersion: "v24.3.0",
+		StainlessLang:           profile.StainlessLang,
+		StainlessPackageVersion: profile.StainlessPackageVersion,
+		StainlessOS:             profile.StainlessOS,
+		StainlessArch:           profile.StainlessArch,
+		StainlessRuntime:        profile.StainlessRuntime,
+		StainlessRuntimeVersion: profile.StainlessRuntimeVersion,
 	}
 }
 

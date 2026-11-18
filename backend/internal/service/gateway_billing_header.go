@@ -30,7 +30,10 @@ func effectiveBillingUserAgent(mimicUserAgent, tokenType string, mimicClaudeCode
 
 // syncBillingHeaderVersion rewrites cc_version in x-anthropic-billing-header
 // system text blocks to match the version extracted from userAgent.
-// Recompute any recognized fingerprint suffix because its input includes the version.
+// Recompute a recognized suffix only when the version actually changes. A
+// same-version suffix is client-owned (and may derive from history absent in a
+// thread continuation). This helper does not implement thread-aware version
+// migration; callers must not treat it as support for stateful thread routing.
 // Only touches system array blocks whose text starts with "x-anthropic-billing-header".
 func syncBillingHeaderVersion(body []byte, userAgent string) []byte {
 	version := ExtractCLIVersion(userAgent)
@@ -52,10 +55,15 @@ func syncBillingHeaderVersion(body []byte, userAgent string) []byte {
 		text := item.Get("text")
 		if text.Exists() && text.Type == gjson.String &&
 			strings.HasPrefix(text.String(), "x-anthropic-billing-header") {
-			if fingerprintedReplacement == "" {
-				fingerprintedReplacement = replacement + "." + computeClaudeCodeFingerprint(body, version)
-			}
-			newText := ccVersionWithFingerprintInBillingRe.ReplaceAllString(text.String(), fingerprintedReplacement)
+			newText := ccVersionWithFingerprintInBillingRe.ReplaceAllStringFunc(text.String(), func(match string) string {
+				if ccVersionInBillingRe.FindString(match) == replacement {
+					return match
+				}
+				if fingerprintedReplacement == "" {
+					fingerprintedReplacement = replacement + "." + computeClaudeCodeFingerprint(body, version)
+				}
+				return fingerprintedReplacement
+			})
 			newText = ccVersionInBillingRe.ReplaceAllString(newText, replacement)
 			if newText != text.String() {
 				if updated, err := sjson.SetBytes(body, fmt.Sprintf("system.%d.text", idx), newText); err == nil {

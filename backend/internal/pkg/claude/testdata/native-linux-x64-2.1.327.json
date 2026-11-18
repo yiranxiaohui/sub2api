@@ -1,0 +1,22 @@
+{
+  "capture": {
+    "cli_version": "2.1.327",
+    "platform": "native-linux-x64",
+    "date": "2026-11-18",
+    "scope": "Non-secret SDK header values measured locally; not a full request or account profile"
+  },
+  "headers": {
+    "X-Stainless-Lang": "js",
+    "X-Stainless-Package-Version": "0.128.0",
+    "X-Stainless-OS": "Linux",
+    "X-Stainless-Arch": "x64",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v26.12.1",
+    "X-Stainless-Retry-Count": "0",
+    "X-Stainless-Timeout": "600"
+  },
+  "billing_cases": [
+    {"prompt": "hi", "suffix": "502"},
+    {"prompt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz", "suffix": "4c4"}
+  ]
+}

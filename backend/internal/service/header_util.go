@@ -42,6 +42,12 @@ var headerWireCasing = map[string]string{
 	"x-claude-code-session-id": "X-Claude-Code-Session-Id",
 	"x-client-request-id":      "x-client-request-id",
 	"content-length":           "content-length",
+
+	// Optional native CLI 2.1.327 fields (not emitted for every base URL).
+	"x-claude-1p-request-class":   "x-claude-1p-request-class",
+	"x-claude-code-request-class": "x-claude-code-request-class",
+	"x-claude-code-prompt-id":     "x-claude-code-prompt-id",
+	"x-claude-code-sandy-plover":  "x-claude-code-sandy-plover",
 }
 
 // headerWireOrder 定义真实 Claude CLI 发送 header 的顺序（基于抓包）。

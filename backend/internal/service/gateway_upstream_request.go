@@ -208,9 +208,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	}
 
 	// OAuth + mimic Claude Code：强制注入 CLI 指纹相关 header
-	// （user-agent/x-stainless-*/x-app/Accept/x-stainless-helper-method/x-client-request-id）
+	// （user-agent/x-stainless-*/x-app/Accept/x-client-request-id）
 	if tokenType == "oauth" && mimicClaudeCode {
-		applyClaudeCodeMimicHeaders(req, reqStream, mimicUserAgent)
+		applyClaudeCodeMimicHeaders(req, mimicUserAgent)
 	}
 
 	// 写入最终 anthropic-beta header
@@ -962,7 +962,7 @@ var defaultDroppedBetasSet = buildBetaTokenSet(claude.DroppedBetas)
 // headers when using Claude Code-scoped OAuth credentials.
 // mimicUserAgent 由调用方在同一请求内取一次传入，保证出站 User-Agent 头与
 // 请求体 billing attribution 的 cc_version 版本号严格一致。
-func applyClaudeCodeMimicHeaders(req *http.Request, isStream bool, mimicUserAgent string) {
+func applyClaudeCodeMimicHeaders(req *http.Request, mimicUserAgent string) {
 	if req == nil {
 		return
 	}
@@ -982,9 +982,9 @@ func applyClaudeCodeMimicHeaders(req *http.Request, isStream bool, mimicUserAgen
 	}
 	// Real Claude CLI uses Accept: application/json (even for streaming).
 	setHeaderRaw(req.Header, "Accept", "application/json")
-	if isStream {
-		setHeaderRaw(req.Header, "x-stainless-helper-method", "stream")
-	}
+	// Native CLI 2.1.327 does not emit the legacy SDK stream-helper header.
+	// This applies only to generated requests; passthrough clients keep theirs.
+	deleteHeaderAllForms(req.Header, "x-stainless-helper-method")
 	// Real Claude CLI 每个请求都会生成一个新的 UUID 放在 x-client-request-id。
 	// 上游会以此作为会话/请求指纹的一部分，缺失或重复都可能触发第三方判定。
 	if getHeaderRaw(req.Header, "x-client-request-id") == "" {
