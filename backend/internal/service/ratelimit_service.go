@@ -381,6 +381,13 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		fableCreditsRequired := s.persistAnthropicFableCreditsRequired(ctx, account, headers, responseBody, firstRequestedModel(requestedModel))
 		// 7d_oi 是 Fable 模型专属的 7d 窗口：只标记模型级限流，账号对其他模型仍可调度。
 		fableLimited := s.persistAnthropicFableWindowLimit(ctx, account, headers)
+		// An explicit upstream delay must not be shortened by a local rule.
+		// Model-only entitlement/window failures remain model-scoped unless a
+		// shared account window is also demonstrably exhausted.
+		if (!fableCreditsRequired && !fableLimited || selectAnthropicExhaustedWindow(headers, time.Now()) != nil) &&
+			s.handleAnthropicRetryAfter(ctx, account, headers) {
+			return false
+		}
 		if s.persistAnthropicExhaustedWindowLimit(ctx, account, headers) {
 			return false
 		}
@@ -1295,6 +1302,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			slog.Info("openai_account_rate_limited", "account_id", account.ID, "reset_at", *resetAt)
 			return
 		}
+	}
+
+	if s.handleAnthropicRetryAfter(ctx, account, headers) {
+		return
 	}
 
 	// 2. Anthropic 平台：尝试解析 per-window 头（5h / 7d），选择实际触发的窗口
