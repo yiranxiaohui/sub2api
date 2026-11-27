@@ -1380,15 +1380,20 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		return
 	}
 
-	// 解析Unix时间戳
-	ts, err := strconv.ParseInt(resetTimestamp, 10, 64)
-	if err != nil {
-		slog.Warn("rate_limit_reset_parse_failed", "reset_timestamp", resetTimestamp, "error", err)
-		s.apply429FallbackRateLimit(ctx, account, "reset_parse_failed")
+	// 聚合头反映的是"绑定 claim"的重置点，不一定是账号的 5h/7d 窗口：
+	// 例如长上下文 "Usage credits are required" 的 429 会带月度额度 claim，
+	// 重置点落在次月 1 日 00:00 UTC。照单全收会把整个账号封到月初（实测 17 天），
+	// 因此与 per-window 头一致，仅接受 (now, now+8d] 内的值，否则走秒级兜底。
+	now := time.Now()
+	resetAt, ok := parseAnthropicAggregateReset(headers, now)
+	if !ok {
+		slog.Warn("rate_limit_reset_out_of_range",
+			"account_id", account.ID,
+			"platform", account.Platform,
+			"reset_timestamp", resetTimestamp)
+		s.apply429FallbackRateLimit(ctx, account, "reset_out_of_range")
 		return
 	}
-
-	resetAt := time.Unix(ts, 0)
 
 	// 标记限流状态
 	s.notifyAccountSchedulingBlocked(account, resetAt, "429")
@@ -1397,11 +1402,13 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		return
 	}
 
-	// 根据重置时间反推5h窗口
-	windowEnd := resetAt
-	windowStart := resetAt.Add(-5 * time.Hour)
-	if err := s.accountRepo.UpdateSessionWindow(ctx, account.ID, &windowStart, &windowEnd, "rejected"); err != nil {
-		slog.Warn("rate_limit_update_session_window_failed", "account_id", account.ID, "error", err)
+	// 仅当重置点落在 5h 窗口量级内才反推 session window，避免把 7d 级重置写成"5 小时窗口"
+	if !resetAt.After(now.Add(6 * time.Hour)) {
+		windowEnd := resetAt
+		windowStart := resetAt.Add(-5 * time.Hour)
+		if err := s.accountRepo.UpdateSessionWindow(ctx, account.ID, &windowStart, &windowEnd, "rejected"); err != nil {
+			slog.Warn("rate_limit_update_session_window_failed", "account_id", account.ID, "error", err)
+		}
 	}
 
 	slog.Info("account_rate_limited", "account_id", account.ID, "reset_at", resetAt)

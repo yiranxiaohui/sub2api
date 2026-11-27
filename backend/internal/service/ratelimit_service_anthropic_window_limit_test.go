@@ -303,3 +303,57 @@ func TestHandleUpstreamError_Anthropic429Without7dOiKeepsLegacyBehavior(t *testi
 	require.Equal(t, reset5h, repo.lastRateLimitReset, "legacy path picks the sooner reset")
 	require.Equal(t, 1, repo.sessionWindowCalls)
 }
+
+// 长上下文 "Usage credits are required" 的 429 只带聚合头，且重置点是月度 claim 的次月 1 日。
+// 不能把整个账号封到月初，也不能把它反推成一个远期的 5h 窗口，应走秒级兜底冷却。
+func TestHandleUpstreamError_AnthropicAggregateResetBeyondWindowUsesFallback(t *testing.T) {
+	resetAt := time.Now().Add(17*24*time.Hour + 15*time.Hour).Truncate(time.Second)
+	headers := http.Header{}
+	headers.Set("anthropic-ratelimit-unified-reset", strconv.FormatInt(resetAt.Unix(), 10))
+
+	repo := &anthropicWindowLimitRepo{}
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	account := &Account{ID: 155, Type: AccountTypeOAuth, Platform: PlatformAnthropic}
+	body := []byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Usage credits are required for long context requests."}}`)
+
+	before := time.Now()
+	svc.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, headers, body, "claude-sonnet-4-6")
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.True(t, repo.lastRateLimitReset.Before(before.Add(time.Hour)), "out-of-range aggregate reset must fall back to a short cooldown, got %v", repo.lastRateLimitReset)
+	require.Zero(t, repo.sessionWindowCalls, "out-of-range aggregate reset must not rewrite the 5h session window")
+}
+
+// 聚合头落在 7d 量级内时仍按账号限流，但不应被写成"5 小时窗口"。
+func TestHandleUpstreamError_AnthropicAggregateReset7dScaleSkipsSessionWindow(t *testing.T) {
+	resetAt := time.Now().Add(3 * 24 * time.Hour).Truncate(time.Second)
+	headers := http.Header{}
+	headers.Set("anthropic-ratelimit-unified-reset", strconv.FormatInt(resetAt.Unix(), 10))
+
+	repo := &anthropicWindowLimitRepo{}
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	account := &Account{ID: 42, Type: AccountTypeOAuth, Platform: PlatformAnthropic}
+
+	svc.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, headers, []byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Error"}}`))
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, resetAt, repo.lastRateLimitReset)
+	require.Zero(t, repo.sessionWindowCalls)
+}
+
+// 聚合头落在 5h 量级内时保持原行为：账号限流并反推 session window。
+func TestHandleUpstreamError_AnthropicAggregateReset5hScaleUpdatesSessionWindow(t *testing.T) {
+	resetAt := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	headers := http.Header{}
+	headers.Set("anthropic-ratelimit-unified-reset", strconv.FormatInt(resetAt.Unix(), 10))
+
+	repo := &anthropicWindowLimitRepo{}
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	account := &Account{ID: 42, Type: AccountTypeOAuth, Platform: PlatformAnthropic}
+
+	svc.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, headers, []byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Error"}}`))
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, resetAt, repo.lastRateLimitReset)
+	require.Equal(t, 1, repo.sessionWindowCalls)
+}
